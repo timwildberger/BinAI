@@ -114,7 +114,6 @@ def get_section_name(project, addr):
             return section.name
     return "UNKNOWN"
 
-# ... [everything above unchanged] ...
 
 def extract_function_data(binary_path):
     project = angr.Project(binary_path, auto_load_libs=False)

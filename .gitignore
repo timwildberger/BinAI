@@ -1,0 +1,49 @@
+# macOS system files
+.DS_Store
+
+# Node.js
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+
+# Logs
+*.log
+
+# OS and Editor junk
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# VS Code
+.vscode/
+
+# IDEs
+.idea/
+*.swp
+
+# Build directories
+dist/
+build/
+out/
+src/
+
+# Environment files
+.env
+.env.*
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Temporary files
+*.tmp
+*.bak
+*.old
+*.orig
+
