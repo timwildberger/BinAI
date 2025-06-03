@@ -46,3 +46,7 @@ pip-wheel-metadata/
 
 # MACOS
 __MACOSX
+
+# src and out
+src/
+out/
