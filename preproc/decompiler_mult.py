@@ -259,10 +259,12 @@ def main():
     queue_file = sys.argv[1]
     # your processing here
     print(f"Using queue: {queue_file}")
-    max_jobs = 1  # You can raise or remove this limit
-    iterator = 0
-    while iterator < max_jobs:
+    while True:
         binary_path = pop_first_line(queue_file)
+
+        if binary_path is None:
+            print("Queue is empty. Exiting.")
+            break
 
         if binary_path is None:
             print("Queue is empty. Exiting.")
@@ -284,7 +286,6 @@ def main():
 
         print(f"\nTotal wall-clock analysis time: {end_time - start_time:.2f} seconds (parallel elapsed time)")
         print(f"[+] Done. Data saved to {csv_path}")
-        iterator += 1
 
 
 if __name__ == "__main__":
