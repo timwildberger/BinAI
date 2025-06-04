@@ -13,63 +13,43 @@ MAIL_USER="tim.wildberger@campus.lmu.de"
 # Directory where job was submitted from
 REPO_ROOT="$SLURM_SUBMIT_DIR"
 SLURM_DIR="$REPO_ROOT/slurm"
-TMPDIR=$(mktemp -d /scratch/binai_XXXXXX)
+OUT_DIR="$REPO_ROOT/out"
+QUEUE_DIR="$REPO_ROOT/queue"
+
+# Ensure directories exist
+mkdir -p "$SLURM_DIR" "$OUT_DIR" "$QUEUE_DIR"
 
 ERROR_LOG="$SLURM_DIR/error.log"
-
-# Ensure slurm log directory exists
-mkdir -p "$SLURM_DIR"
-
-# Copy project to compute node (exclude slurm logs)
-echo "Copying repo to compute node scratch directory..."
-rsync -a --exclude slurm "$REPO_ROOT/" "$TMPDIR/"
+OUTPUT_LOG="$SLURM_DIR/output.txt"
 
 # Activate Python environment
 source "$PYENV_ROOT/bin/activate" && echo "pyenv loaded"
 
-# Run the job
-cd "$TMPDIR"
-PYTHON_SCRIPT="$TMPDIR/preproc/decompiler_mult.py"
+# Step 1: Run binary_filter.py to populate queue/
+echo "Running binary_filter.py to generate queue files..."
+python3 "$REPO_ROOT/preproc/binary_filter.py"
 
-echo "Running Python job in scratch directory..."
-srun --ntasks 1 --nodes=1 -c 14 python3 "$PYTHON_SCRIPT" > "$TMPDIR/output.txt" 2> "$TMPDIR/error.log"
+# Step 2: Launch separate jobs for each queue file
+echo "Submitting jobs for each queue file..."
+for QUEUE_FILE in "$QUEUE_DIR"/*.txt; do
+    BASENAME=$(basename "$QUEUE_FILE" .txt)
+    sbatch <<EOF
+#!/usr/bin/env bash
+#SBATCH --job-name=binai-$BASENAME
+#SBATCH --output=$SLURM_DIR/slurm_%x.out
+#SBATCH --error=$SLURM_DIR/slurm_%x.err
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=14
+#SBATCH --partition=All
+#SBATCH --comment="Process queue file $QUEUE_FILE"
 
-# Sync output back to submit node
-OUT_DIR="$REPO_ROOT/out"
-echo "Syncing 'out' folder back to submit node..."
-rsync -a "$TMPDIR/out/" "$OUT_DIR/"
+source "$PYENV_ROOT/bin/activate"
+cd "$REPO_ROOT"
+python3 preproc/decompiler_mult.py "$QUEUE_FILE"
+EOF
+done
 
-# Sync logs
-cp "$TMPDIR/output.txt" "$SLURM_DIR/output.txt"
-cp "$TMPDIR/error.log" "$ERROR_LOG"
+# Done with main submission script
+echo "All subjobs submitted."
 
-# Timestamp for zip name
-TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-ZIP_PATH="$SLURM_DIR/output_$TIMESTAMP.zip"
-zip -r "$ZIP_PATH" "$OUT_DIR" "$SLURM_DIR"
-
-# Prepare email body
-EMAIL_BODY="$SLURM_DIR/email_body.txt"
-if [ -s "$ERROR_LOG" ]; then
-    echo "Job completed with errors. See the error trace below:" > "$EMAIL_BODY"
-    cat "$ERROR_LOG" >> "$EMAIL_BODY"
-else
-    echo "Job completed successfully." > "$EMAIL_BODY"
-    echo "" >> "$EMAIL_BODY"
-    echo "Output files have been saved to: $OUT_DIR" >> "$EMAIL_BODY"
-    echo "" >> "$EMAIL_BODY"
-    echo "Standard output follows:" >> "$EMAIL_BODY"
-    echo "-------------------------" >> "$EMAIL_BODY"
-    cat "$SLURM_DIR/output.txt" >> "$EMAIL_BODY"
-fi
-
-# Attach output zip and send email
-echo "Sending email with results..."
-echo "Please find the job results and any error messages below." | \
-mutt -s "BinAI Job results" -a "$ZIP_PATH" -i "$EMAIL_BODY" -- "$MAIL_USER"
-
-# Cleanup
-echo "Cleaning up temporary directory: $TMPDIR"
-rm -rf "$TMPDIR"
-
-echo "Slurm execution done."

@@ -233,53 +233,44 @@ def extract_function_data_parallel(binary_path, num_workers=4):
 
     return total_times, csv_path
 
-def sort_files_by_size(paths):
-    """
-    Takes a list of file paths (as strings), returns a list of (path, size_in_bytes),
-    sorted by size descendingly.
-    """
-    file_sizes = []
-    for path in paths:
-        if os.path.isfile(path):
-            size = os.path.getsize(path)
-            file_sizes.append((path, size))
-        else:
-            print(f"Warning: '{path}' is not a valid file or doesn't exist.")
 
-    sorted_files = sorted(file_sizes, key=lambda x: x[1], reverse=False)
 
-    # Print with formatting
-    for path, size in sorted_files:
-        size_kb = size / 1024
-        size_mb = size / (1024 * 1024)
-        #print(f"{path}:\n"
-        #      f"  {size} bytes\n"
-        #      f"  {size_kb:.2f} KB\n"
-        #      f"  {size_mb:.2f} MB\n")
+def pop_first_line(queue_file: str) -> str | None:
+    with open(queue_file, "r") as f:
+        lines = f.readlines()
 
-    return [path for path, _ in sorted_files]
+    if not lines:
+        return None
+
+    first_line = lines[0].strip()
+
+    with open(queue_file, "w") as f:
+        f.writelines(lines[1:])
+
+    return first_line
+
 
 def main():
+
     if len(sys.argv) != 2:
-        print(f"Usage: python {sys.argv[0]} <binary_path>")
+        print(f"Usage: python {sys.argv[0]} <queue_file>")
         sys.exit(1)
 
-    bf = BinaryFilter("./src")
-    matches = bf.filter(arch=["x86", "x64", "arm32", "arm64"], compiler=["gcc", "clang"], version="9", opt=["O0", "O3"])
-    paths = []
-    for match in matches:
-        print(match["path"])
-        paths.append(match["path"])
-    print(len(matches))
-    
-    queue = sort_files_by_size(paths)
+    queue_file = sys.argv[1]
+    # your processing here
+    print(f"Using queue: {queue_file}")
+    max_jobs = 1  # You can raise or remove this limit
     iterator = 0
-    for element in queue:
-        if iterator == 2:
+    while iterator < max_jobs:
+        binary_path = pop_first_line(queue_file)
+
+        if binary_path is None:
+            print("Queue is empty. Exiting.")
             break
 
+        print(f"\n[*] Processing binary: {binary_path}")
         start_time = time.perf_counter()
-        total_times, csv_path = extract_function_data_parallel(element, num_workers=8)
+        total_times, csv_path = extract_function_data_parallel(binary_path, num_workers=8)
         end_time = time.perf_counter()
 
         print("\n=== Total Time per Representation (sum of all functions) ===")
@@ -292,9 +283,15 @@ def main():
                 print(f"{key:8}: {val:.2f} seconds (summed over all functions)")
 
         print(f"\nTotal wall-clock analysis time: {end_time - start_time:.2f} seconds (parallel elapsed time)")
-
         print(f"[+] Done. Data saved to {csv_path}")
         iterator += 1
 
+
 if __name__ == "__main__":
     main()
+
+# TODO separater aufruf des queueing und filters um Files zu erstellen
+
+# TODO pfad zur queue als parameter für den Decompiler
+
+# TODO Preprocessing der strings für die csv rausnehmen und nur so ändern, dass die csv nicht zerlegt wird

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 class BinaryFilter:
     def __init__(self, root_dir="src"):
@@ -64,21 +65,73 @@ class BinaryFilter:
                 results.append(binary)
         return results
 
+def sort_files_by_size(paths):
+    """
+    Takes a list of file paths (as strings), returns a list of (path, size_in_bytes),
+    sorted by size descendingly.
+    """
+    file_sizes = []
+    for path in paths:
+        if os.path.isfile(path):
+            size = os.path.getsize(path)
+            file_sizes.append((path, size))
+        else:
+            print(f"Warning: '{path}' is not a valid file or doesn't exist.")
+
+    sorted_files = sorted(file_sizes, key=lambda x: x[1], reverse=False)
+
+    # Print with formatting
+    for path, size in sorted_files:
+        size_kb = size / 1024
+        size_mb = size / (1024 * 1024)
+        #print(f"{path}:\n"
+        #      f"  {size} bytes\n"
+        #      f"  {size_kb:.2f} KB\n"
+        #      f"  {size_mb:.2f} MB\n")
+
+    return [path for path, _ in sorted_files]
+
+
+def split_paths_interleaved(paths, output_dir, prefix="queue"):
+    """
+    Splits a list of file paths into 4 interleaved lists and writes each to a text file.
+
+    Args:
+        paths (list of str): The list of file paths.
+        output_dir (str or Path): Directory to store output files.
+        prefix (str): Prefix for the output text files.
+
+    Creates:
+        queue_0.txt, queue_1.txt, queue_2.txt, queue_3.txt in output_dir
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create 4 interleaved buckets
+    buckets = [[] for _ in range(4)]
+    for i, path in enumerate(paths):
+        buckets[i % 4].append(path)
+
+    # Write each bucket to its own text file
+    for i, bucket in enumerate(buckets):
+        file_path = output_dir / f"{prefix}_{i}.txt"
+        with open(file_path, "w") as f:
+            for line in bucket:
+                f.write(line + "\n")
 
 # Optional for standalone testing
 def main():
-    bf = BinaryFilter()
-
-    # Show filter options
-    bf.show_filter_options()
-
-    # Example filter usage
-    matches = bf.filter(arch=["arm32"], compiler=["clang"], version=["9"])
-
+    bf = BinaryFilter("./src")
+    matches = bf.filter(arch=["x86", "x64", "arm32", "arm64"], compiler=["gcc", "clang"], version="9", opt=["O0", "O3"])
+    paths = []
     for match in matches:
         print(match["path"])
+        paths.append(match["path"])
+    print(len(matches))
+    
+    queue = sort_files_by_size(paths)
+    split_paths_interleaved(queue, "./queue/")
 
-    print(f"Matches found: {len(matches)}")
 
 if __name__ == "__main__":
     main()
