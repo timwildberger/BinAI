@@ -23,7 +23,7 @@ ERROR_LOG="$SLURM_DIR/error.log"
 OUTPUT_LOG="$SLURM_DIR/output.txt"
 
 # Activate Python environment
-source "$PYENV_ROOT/bin/activate" && echo "pyenv loaded"
+source "$REPO_ROOT/.venv/bin/activate"
 
 # Step 1: Run binary_filter.py to populate queue/
 echo "Running binary_filter.py to generate queue files..."
