@@ -55,19 +55,21 @@ def lowlevel_disas(cfg):
 
 def highlevel_disas(func) -> str:
     disasm_lines = [str(block.disassembly) for block in func.blocks]
-    disasm_str = sanitize(" ".join(disasm_lines))
-    return ensure_single_space(disasm_str)
+    disasm_str = (" ".join(disasm_lines))
+    #disasm_str = sanitize(" ".join(disasm_lines))
+    return disasm_str
+    #return ensure_single_space(disasm_str)
 
 def process_vex_block(addr, block) -> str:
     try:
         if block.vex is None:
             raise ValueError("No VEX IR available")
         irsb_str = str(block.vex)
-        irsb = remove_newline(irsb_str)
-        irsb = ensure_single_space(irsb)
-        temp, body = split_at_first_instruction(irsb)
-        body2 = remove_three_before_pipe(body)
-        return temp + body2
+        #irsb = remove_newline(irsb_str)
+        #irsb = ensure_single_space(irsb)
+        #temp, body = split_at_first_instruction(irsb)
+        #body2 = remove_three_before_pipe(body)
+        return irsb_str
     except Exception as e:
         return f"[!] VEX error @ {hex(addr)}: {type(e).__name__}: {e}"
 
@@ -95,7 +97,8 @@ def vex_repr(func, project) -> str:
             vex_lines.append(process_vex_block(addr, block))
         except Exception as e:
             vex_lines.append(f"[!] VEX error @ {hex(addr)}: {type(e).__name__}: {e}")
-    return sanitize(" ".join(vex_lines))
+    #return sanitize(" ".join(vex_lines))
+    return (" ".join(vex_lines))
 
 def ail_repr(func, project, man) -> str:
     ail_lines = []
@@ -105,14 +108,16 @@ def ail_repr(func, project, man) -> str:
             ail_lines.extend(process_ail_block(addr, block, man))
         except Exception as e:
             ail_lines.append(f"[!] AIL error @ 0x{addr:x}: {type(e).__name__}: {e}")
-    return ensure_single_space(sanitize(" ".join(ail_lines)))
+    return (" ".join(ail_lines))
+    #return ensure_single_space(sanitize(" ".join(ail_lines)))
 
 def decompilation(func, project, cfg) -> str:
     try:
         dec = project.analyses.Decompiler(func, cfg=cfg)
         if dec is None or dec.codegen is None:
             return "Decompilation failed or empty output"
-        decomp_str = sanitize(dec.codegen.text)
+        decomp_str = dec.codegen.text
+        # decomp_str = sanitize(dec.codegen.text)
         return re.sub(r"\s+", " ", decomp_str)
     except Exception as e:
         return f"Decompilation failed: {e}"
@@ -286,7 +291,7 @@ def main():
 
         print(f"\nTotal wall-clock analysis time: {end_time - start_time:.2f} seconds (parallel elapsed time)")
         print(f"[+] Done. Data saved to {csv_path}")
-
+        break
 
 if __name__ == "__main__":
     main()
