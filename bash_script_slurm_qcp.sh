@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=qcp-train-routing
-#SBATCH --comment="Solving time delays for the Deutsche Bahn"
+#SBATCH --job-name=binai
+#SBATCH --comment="Binary Disassembly"
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=tim.wildberger@campus.lmu.de
 #SBATCH --partition=All
@@ -9,18 +9,8 @@
 #SBATCH -n 1
 
 
-# Control variable to set the email recipient ('T' for Tim, 'J' for Friedrich)
-EMAIL_RECIPIENT="T"
 
-# Set the recipient based on EMAIL_RECIPIENT variable
-if [ "$EMAIL_RECIPIENT" == "T" ]; then
-    MAIL_USER="tim.wildberger@campus.lmu.de"
-elif [ "$EMAIL_RECIPIENT" == "J" ]; then
-    MAIL_USER="j.friedrich@campus.lmu.de"
-else
-    echo "Invalid EMAIL_RECIPIENT value. Please set it to 'T' or 'J'."
-    exit 1
-fi
+MAIL_USER="tim.wildberger@campus.lmu.de"
 
 SLURM_DIR="slurm"
 ERROR_LOG="$SLURM_DIR/error.log"  # Error log file in the slurm folder

@@ -48,8 +48,6 @@ class BinaryFilter:
             print(f"{field}: {sorted(options[field])}")
 
     def filter(self, **criteria):
-        """
-        Filters: arch, compiler, version, opt, program"""
         results = []
         for binary in self.binaries:
             match = True
@@ -67,19 +65,20 @@ class BinaryFilter:
         return results
 
 
+# Optional for standalone testing
 def main():
     bf = BinaryFilter()
 
     # Show filter options
     bf.show_filter_options()
 
-    # Filter for arch in ["x86", "arm64"] and opt = "O0"
-    matches = bf.filter(arch=["x86", "arm64", "arm32", "x64"], compiler=["gcc", "clang"], opt=["O0", "O2"], version=["9"])
+    # Example filter usage
+    matches = bf.filter(arch=["arm32"], compiler=["clang"], version=["9"])
 
     for match in matches:
         print(match["path"])
 
-    print(len(matches))
+    print(f"Matches found: {len(matches)}")
 
 if __name__ == "__main__":
     main()

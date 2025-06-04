@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from multiprocessing import Pool
 from typing import Tuple
+from binary_filter import BinaryFilter
 
 RE_MULTI_WS = re.compile(r"\s+")
 RE_THREE_BEFORE_PIPE = re.compile(r".{3}\|")
@@ -224,11 +225,49 @@ def extract_function_data_parallel(binary_path, num_workers=4):
 
     return total_times, csv_path
 
+def sort_files_by_size(paths):
+    """
+    Takes a list of file paths (as strings), returns a list of (path, size_in_bytes),
+    sorted by size descendingly.
+    """
+    file_sizes = []
+    for path in paths:
+        if os.path.isfile(path):
+            size = os.path.getsize(path)
+            file_sizes.append((path, size))
+        else:
+            print(f"Warning: '{path}' is not a valid file or doesn't exist.")
 
-if __name__ == "__main__":
+    sorted_files = sorted(file_sizes, key=lambda x: x[1], reverse=True)
+
+    # Print with formatting
+    for path, size in sorted_files:
+        size_kb = size / 1024
+        size_mb = size / (1024 * 1024)
+        #print(f"{path}:\n"
+        #      f"  {size} bytes\n"
+        #      f"  {size_kb:.2f} KB\n"
+        #      f"  {size_mb:.2f} MB\n")
+
+    return [path for path, _ in sorted_files]
+
+def main():
     if len(sys.argv) != 2:
         print(f"Usage: python {sys.argv[0]} <binary_path>")
         sys.exit(1)
+
+    bf = BinaryFilter("./src")
+    matches = bf.filter(arch=["x86", "x64", "arm32", "arm64"], compiler=["gcc", "clang"], version="9", opt=["O0", "O3"])
+    paths = []
+    for match in matches:
+        print(match["path"])
+        paths.append(match["path"])
+    print(len(matches))
+    
+    queue = sort_files_by_size(paths)
+    for element in queue:
+        print(element)
+    return
 
     start_time = time.perf_counter()
     total_times, csv_path = extract_function_data_parallel(sys.argv[1], num_workers=8)
@@ -246,3 +285,7 @@ if __name__ == "__main__":
     print(f"\nTotal wall-clock analysis time: {end_time - start_time:.2f} seconds (parallel elapsed time)")
 
     print(f"[+] Done. Data saved to {csv_path}")
+
+
+if __name__ == "__main__":
+    main()
