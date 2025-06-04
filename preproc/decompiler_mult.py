@@ -179,10 +179,18 @@ def extract_function_data_parallel(binary_path, num_workers=4):
     lowlevel_results = lowlevel_disas(cfg_main)
     l_disas_time = round(time.perf_counter() - t0, 2)
 
+    # Original binary path (e.g., src/clamav/filename)
     binary_name = os.path.basename(binary_path)
-    output_path = Path(binary_path.replace("src", "out")).resolve()
+
+    # Get relative path after 'src/'
+    relative_path = Path(binary_path).relative_to("src")
+
+    # Replace 'src' with 'out'
+    output_path = Path("out") / relative_path.parent
     output_path.mkdir(parents=True, exist_ok=True)
-    csv_path = f"{output_path}/{binary_name}_functions.csv"
+
+    # Final CSV file path
+    csv_path = output_path / f"{binary_name}_functions.csv"
 
     func_addrs = [fa for fa, _ in project_main.kb.functions.items()]
 
@@ -238,7 +246,7 @@ def sort_files_by_size(paths):
         else:
             print(f"Warning: '{path}' is not a valid file or doesn't exist.")
 
-    sorted_files = sorted(file_sizes, key=lambda x: x[1], reverse=True)
+    sorted_files = sorted(file_sizes, key=lambda x: x[1], reverse=False)
 
     # Print with formatting
     for path, size in sorted_files:
@@ -265,27 +273,28 @@ def main():
     print(len(matches))
     
     queue = sort_files_by_size(paths)
+    iterator = 0
     for element in queue:
-        print(element)
-    return
+        if iterator == 2:
+            break
 
-    start_time = time.perf_counter()
-    total_times, csv_path = extract_function_data_parallel(sys.argv[1], num_workers=8)
-    end_time = time.perf_counter()
+        start_time = time.perf_counter()
+        total_times, csv_path = extract_function_data_parallel(element, num_workers=8)
+        end_time = time.perf_counter()
 
-    print("\n=== Total Time per Representation (sum of all functions) ===")
-    for key, val in total_times.items():
-        if key == "LDISAS":
-            print(f"{key:8}: {val:.2f} seconds (single-threaded)")
-        elif key == "DECOMP":
-            print(f"{key:8}: -- (timing not summed due to multiprocessing)")
-        else:
-            print(f"{key:8}: {val:.2f} seconds (summed over all functions)")
+        print("\n=== Total Time per Representation (sum of all functions) ===")
+        for key, val in total_times.items():
+            if key == "LDISAS":
+                print(f"{key:8}: {val:.2f} seconds (single-threaded)")
+            elif key == "DECOMP":
+                print(f"{key:8}: -- (timing not summed due to multiprocessing)")
+            else:
+                print(f"{key:8}: {val:.2f} seconds (summed over all functions)")
 
-    print(f"\nTotal wall-clock analysis time: {end_time - start_time:.2f} seconds (parallel elapsed time)")
+        print(f"\nTotal wall-clock analysis time: {end_time - start_time:.2f} seconds (parallel elapsed time)")
 
-    print(f"[+] Done. Data saved to {csv_path}")
-
+        print(f"[+] Done. Data saved to {csv_path}")
+        iterator += 1
 
 if __name__ == "__main__":
     main()
