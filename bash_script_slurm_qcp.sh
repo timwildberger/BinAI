@@ -4,57 +4,63 @@
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=tim.wildberger@campus.lmu.de
 #SBATCH --partition=All
-#SBATCH --nodes 1
+#SBATCH --nodes=1
 #SBATCH -B 1:7:2
 #SBATCH -n 1
 
-
-
 MAIL_USER="tim.wildberger@campus.lmu.de"
 
-SLURM_DIR="slurm"
-ERROR_LOG="$SLURM_DIR/error.log"  # Error log file in the slurm folder
+# Set directory where SLURM job was submitted from
+REPO_ROOT="$SLURM_SUBMIT_DIR"
+SLURM_DIR="$REPO_ROOT/slurm"
+TMPDIR=$(mktemp -d /scratch/binai_XXXXXX)
 
-# Create the slurm directory if it doesn't exist
-mkdir -p $SLURM_DIR
+ERROR_LOG="$SLURM_DIR/error.log"
 
-# Activate python environment
+# Create the slurm directory on the submission node
+mkdir -p "$SLURM_DIR"
+
+# Copy project files to temp directory on compute node
+echo "Copying repo to compute node scratch directory..."
+rsync -a --exclude slurm "$REPO_ROOT/" "$TMPDIR/"
+
+# Activate Python environment
 source "$PYENV_ROOT/bin/activate" && echo "pyenv loaded"
 
-# Absolute path to the Python script (ensure it is correct)
-PYTHON_SCRIPT="$HOME/Desktop/qcp/siemens-train-routing/model/lr/lr_pipeline.py"
+# Run the Python job in the temp directory
+cd "$TMPDIR"
+PYTHON_SCRIPT="$TMPDIR/preproc/decompiler_mult.py"
 
-# Run the python job and capture both stdout and stderr inside the slurm folder
-echo "Running Python job and capturing output and error..."
-srun --ntasks 1 --nodes=1 -c 14 python3 "$PYTHON_SCRIPT" > "$SLURM_DIR/output.txt" 2> "$ERROR_LOG"
+echo "Running Python job in scratch directory..."
+srun --ntasks 1 --nodes=1 -c 14 python3 "$PYTHON_SCRIPT" > "$TMPDIR/output.txt" 2> "$TMPDIR/error.log"
 
-# Check if any error occurred and store it in the error log and email body
-echo "Checking for errors in the error log..."
-# Ensure the error file has content
+# Copy output directory back to the original repo on the submission node
+echo "Syncing 'out' folder back to submit node..."
+rsync -a "$TMPDIR/out/" "$REPO_ROOT/out/"
+
+# Copy logs back
+cp "$TMPDIR/output.txt" "$SLURM_DIR/output.txt"
+cp "$TMPDIR/error.log" "$ERROR_LOG"
+
+# Build email body based on success/failure
 if [ -s "$ERROR_LOG" ]; then
-    #If error log has content, include it in the email body
     echo "Job completed with errors. See the error trace below:" > "$SLURM_DIR/email_body.txt"
     cat "$ERROR_LOG" >> "$SLURM_DIR/email_body.txt"
 else
-    # If no errors, simply notify success
     echo "Job completed successfully. See the output below:" > "$SLURM_DIR/email_body.txt"
     cat "$SLURM_DIR/output.txt" >> "$SLURM_DIR/email_body.txt"
 fi
 
-# Create a timestamp
+# Timestamp and zip
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-
-# Move all output files to the slurm folder
-echo "Moving .out files to SLURM_DIR"
-mv *.out "$SLURM_DIR"
-
-# Create a zip file with a timestamp
+mv *.out "$SLURM_DIR" 2>/dev/null
 zip -r "$SLURM_DIR/output_$TIMESTAMP.zip" "$SLURM_DIR"
 
-# Send the results via email with the zip file attached
-echo "Sending email with very nice results."
+# Email results
+echo "Sending email with results..."
+echo "Please find the job results and any error messages below." | mutt -s "BinAI Job results" -a "$SLURM_DIR/output_$TIMESTAMP.zip" -i "$SLURM_DIR/email_body.txt" -- "$MAIL_USER"
 
-# The '-i' flag points to the email body file and '-a' attaches the zip file
-echo "Please find the job results and any error messages below." | mutt -s "QCP Train Routing Results" -a "$SLURM_DIR/output_$TIMESTAMP.zip" -i "$SLURM_DIR/email_body.txt" -- "$MAIL_USER"
+echo "Cleaning up temporary directory: $TMPDIR"
+rm -rf "$TMPDIR"
 
 echo "Slurm execution done."
