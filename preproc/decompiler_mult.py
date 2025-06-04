@@ -215,11 +215,11 @@ def extract_function_data_parallel(binary_path, num_workers=4):
             writer.writerow([
                 res["func_name"],
                 res["section_name"],
-                res["highlevel"],
-                low_dis_str,
-                res["ail"],
-                res["vex"],
-                res["decomp"]
+                f'<HDIS> {res["highlevel"]} </HDIS>',
+                f'<LDIS> {low_dis_str} </LDIS>',
+                f'<AIL> {res["ail"]} </AIL>',
+                f'<VEX> {res["vex"]} </VEX>',
+                f'<DECOMP> {res["decomp"]} </DECOMP>',
             ])
 
     return total_times, csv_path
