@@ -254,6 +254,37 @@ def pop_first_line(queue_file: str) -> str | None:
 
     return first_line
 
+def filter_queue_file_by_existing_output(queue_file: str, out_dir: str = "out") -> None:
+    """
+    Removes lines from the queue file if a corresponding output CSV already exists in the out/ directory.
+    """
+    filtered_lines = []
+
+    with open(queue_file, "r") as f:
+        lines = [line.strip() for line in f if line.strip()]
+
+    for binary_path in lines:
+        binary_name = os.path.basename(binary_path)
+        try:
+            relative_path = Path(binary_path).relative_to("src")
+        except ValueError:
+            print(f"[!] Skipping non-src path: {binary_path}")
+            continue
+
+        output_csv = Path(out_dir) / relative_path.parent / f"{binary_name}_functions.csv"
+
+        if not output_csv.exists():
+            filtered_lines.append(binary_path)
+        else:
+            print(f"[~] Skipping {binary_path} (output exists at {output_csv})")
+
+    with open(queue_file, "w") as f:
+        for line in filtered_lines:
+            f.write(f"{line}\n")
+
+    print(f"[+] Filtered queue file {queue_file}: {len(filtered_lines)} items remaining.")
+
+
 
 def main():
 
@@ -262,6 +293,9 @@ def main():
         sys.exit(1)
 
     queue_file = sys.argv[1]
+
+    print(f"[*] Filtering queue: {queue_file}")
+    filter_queue_file_by_existing_output(queue_file)
     # your processing here
     print(f"Using queue: {queue_file}")
     while True:
