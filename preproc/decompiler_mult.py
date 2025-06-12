@@ -271,10 +271,6 @@ def main():
             print("Queue is empty. Exiting.")
             break
 
-        if binary_path is None:
-            print("Queue is empty. Exiting.")
-            break
-
         print(f"\n[*] Processing binary: {binary_path}")
         start_time = time.perf_counter()
         total_times, csv_path = extract_function_data_parallel(binary_path, num_workers=8)
@@ -291,7 +287,7 @@ def main():
 
         print(f"\nTotal wall-clock analysis time: {end_time - start_time:.2f} seconds (parallel elapsed time)")
         print(f"[+] Done. Data saved to {csv_path}")
-        break
+        
 
 if __name__ == "__main__":
     main()
