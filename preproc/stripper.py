@@ -1,8 +1,8 @@
-import os, sys
+import os
+import sys
 import lief
 
 def strip_debug(binary):
-    """Remove debug sections."""
     to_remove = [".debug_info", ".debug_line", ".debug_str", ".debug_abbrev", ".debug_frame"]
     for section in to_remove:
         sec = binary.get_section(section)
@@ -11,7 +11,6 @@ def strip_debug(binary):
     return binary
 
 def strip_symbols(binary):
-    """Remove symbol and string tables."""
     to_remove = [".symtab", ".strtab", ".shstrtab"]
     for section in to_remove:
         sec = binary.get_section(section)
@@ -20,7 +19,6 @@ def strip_symbols(binary):
     return binary
 
 def strip_metadata(binary):
-    """Remove comment and metadata sections."""
     to_remove = [".comment", ".note", ".interp", ".hash", ".gnu.hash"]
     for section in to_remove:
         sec = binary.get_section(section)
@@ -28,94 +26,101 @@ def strip_metadata(binary):
             binary.remove_section(sec.name)
     return binary
 
-def process_binaries(file_list):
-    """Process a list of binaries and generate various stripped versions."""
-    for binary_path in file_list:
-        # Load the binary using lief
-        binary = lief.parse(binary_path)
-        
-        # Create different versions by stripping sections progressively
+def process_binaries(binary_map):
+    """Process and strip binaries, returning a dict mapping queue files to newly created binaries."""
+    queue_updates = {}
+
+    for binary_path, source_queue_file in binary_map:
+        if not os.path.isfile(binary_path):
+            print(f"[WARN] Skipping non-existent file: {binary_path}")
+            continue
+
+        try:
+            binary = lief.parse(binary_path)
+        except Exception as e:
+            print(f"[ERROR] Failed to parse {binary_path}: {e}")
+            continue
+
         base_filename = os.path.basename(binary_path)
         file_dir = os.path.dirname(binary_path)
 
-        # Stage 1: Original Binary (No changes)
-        print(f"[INFO] Processing {base_filename}...")
-        binary.write(os.path.join(file_dir, base_filename))  # Unmodified
-        
-        # Stage 2: Remove Debug Sections (nodebug)
-        binary_nodebug = lief.parse(binary_path)
-        binary_nodebug = strip_debug(binary_nodebug)
-        binary_nodebug.write(os.path.join(file_dir, f"{base_filename}_nodebug"))
-        
-        # Stage 3: Remove Symbol Tables (nosym)
-        binary_nosym = lief.parse(binary_path)
-        binary_nosym = strip_symbols(binary_nosym)
-        binary_nosym.write(os.path.join(file_dir, f"{base_filename}_nosym"))
-        
-        # Stage 4: Remove Metadata Sections (nometa)
-        binary_nometa = lief.parse(binary_path)
-        binary_nometa = strip_metadata(binary_nometa)
-        binary_nometa.write(os.path.join(file_dir, f"{base_filename}_nometa"))
-        
-        # Stage 5: Remove Debug + Symbol Tables (nodebug_nosym)
-        binary_nodebug_nosym = lief.parse(binary_path)
-        binary_nodebug_nosym = strip_debug(binary_nodebug_nosym)
-        binary_nodebug_nosym = strip_symbols(binary_nodebug_nosym)
-        binary_nodebug_nosym.write(os.path.join(file_dir, f"{base_filename}_nodebug_nosym"))
-        
-        # Stage 6: Remove Debug + Metadata (nodebug_nometa)
-        binary_nodebug_nometa = lief.parse(binary_path)
-        binary_nodebug_nometa = strip_debug(binary_nodebug_nometa)
-        binary_nodebug_nometa = strip_metadata(binary_nodebug_nometa)
-        binary_nodebug_nometa.write(os.path.join(file_dir, f"{base_filename}_nodebug_nometa"))
-        
-        # Stage 7: Remove Symbols + Metadata (nosym_nometa)
-        binary_nosym_nometa = lief.parse(binary_path)
-        binary_nosym_nometa = strip_symbols(binary_nosym_nometa)
-        binary_nosym_nometa = strip_metadata(binary_nosym_nometa)
-        binary_nosym_nometa.write(os.path.join(file_dir, f"{base_filename}_nosym_nometa"))
-        
-        # Stage 8: Fully Stripped Binary (nodebug_nosym_nometa)
-        binary_nodebug_nosym_nometa = lief.parse(binary_path)
-        binary_nodebug_nosym_nometa = strip_debug(binary_nodebug_nosym_nometa)
-        binary_nodebug_nosym_nometa = strip_symbols(binary_nodebug_nosym_nometa)
-        binary_nodebug_nosym_nometa = strip_metadata(binary_nodebug_nosym_nometa)
-        binary_nodebug_nosym_nometa.write(os.path.join(file_dir, f"{base_filename}_nodebug_nosym_nometa"))
+        # Track created variants
+        created_variants = []
 
-        print(f"[INFO] Finished processing {base_filename}. Output files saved.")
+        print(f"[INFO] Processing {base_filename}...")
+
+        variants = {
+            "_nodebug": lambda b: strip_debug(b),
+            "_nosym": lambda b: strip_symbols(b),
+            "_nometa": lambda b: strip_metadata(b),
+            "_nodebug_nosym": lambda b: strip_symbols(strip_debug(b)),
+            "_nodebug_nometa": lambda b: strip_metadata(strip_debug(b)),
+            "_nosym_nometa": lambda b: strip_metadata(strip_symbols(b)),
+            "_nodebug_nosym_nometa": lambda b: strip_metadata(strip_symbols(strip_debug(b)))
+        }
+
+        for suffix, transform in variants.items():
+            try:
+                modified_binary = transform(lief.parse(binary_path))
+                new_path = os.path.join(file_dir, f"{base_filename}{suffix}")
+                modified_binary.write(new_path)
+                created_variants.append(new_path)
+            except Exception as e:
+                print(f"[ERROR] Failed to create {suffix} for {binary_path}: {e}")
+
+        # Register the updates for the queue file
+        if source_queue_file not in queue_updates:
+            queue_updates[source_queue_file] = []
+        queue_updates[source_queue_file].extend(created_variants)
+
+        print(f"[INFO] Finished processing {base_filename}. {len(created_variants)} variants created.")
+
+    return queue_updates
+
+def update_queue_files(queue_updates):
+    """Append new binaries to their respective queue files."""
+    for queue_file, new_binaries in queue_updates.items():
+        try:
+            with open(queue_file, "a") as f:
+                for binary_path in new_binaries:
+                    f.write(binary_path + "\n")
+            print(f"[INFO] Updated queue file: {queue_file} with {len(new_binaries)} new binaries.")
+        except Exception as e:
+            print(f"[ERROR] Could not update {queue_file}: {e}")
 
 if __name__ == "__main__":
-    # Directory containing queue files
-    queue_dir = sys.argv[1]  # The first command line argument should be the queue directory path
+    if len(sys.argv) < 2:
+        print("[Usage] python script.py <queue_directory>")
+        sys.exit(1)
 
-    # List of ELF binaries to process
-    binary_files = []
+    queue_dir = sys.argv[1]
 
-    # Check if the directory exists
     if not os.path.isdir(queue_dir):
         print(f"[Error] The directory {queue_dir} does not exist.")
         sys.exit(1)
 
-    # Iterate over all files in the queue directory
-    for file_name in os.listdir(queue_dir):
-        file_path = os.path.join(queue_dir, file_name)
-        
-        # Only process text files (queue files)
-        if os.path.isfile(file_path) and file_name.endswith(".txt"):
-            try:
-                with open(file_path, "r") as file:
-                    # Read the file and strip leading/trailing whitespace from each line
-                    string_list = [line.strip() for line in file.readlines() if line.strip()]
-                    binary_files.extend(string_list)  # Add to the list of binaries to process
-            except FileNotFoundError:
-                print(f"[Error] The file {file_path} was not found.")
-            except Exception as e:
-                print(f"[Error] An unexpected error occurred while processing {file_path}: {e}")
+    binary_map = []  # List of tuples (binary_path, source_queue_file)
 
-    # Check if we found any binaries to process
-    if not binary_files:
-        print("[Error] No binaries to process.")
+    for file_name in os.listdir(queue_dir):
+        if not file_name.endswith(".txt"):
+            continue
+
+        file_path = os.path.join(queue_dir, file_name)
+        try:
+            with open(file_path, "r") as f:
+                for line in f:
+                    binary_path = line.strip()
+                    if binary_path:
+                        binary_map.append((binary_path, file_path))
+        except Exception as e:
+            print(f"[ERROR] Could not read {file_path}: {e}")
+
+    if not binary_map:
+        print("[Error] No binaries found to process.")
         sys.exit(1)
 
-    # Process the binaries
-    process_binaries(binary_files)
+    # Process binaries and get update map
+    queue_updates = process_binaries(binary_map)
+
+    # Append new paths to queue files
+    update_queue_files(queue_updates)
