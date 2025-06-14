@@ -22,9 +22,21 @@ OUTPUT_LOG="$SLURM_DIR/output.txt"
 
 source "$REPO_ROOT/.venv/bin/activate"
 
-echo "Running binary_filter.py to generate queue files..."
-python3 "$REPO_ROOT/preproc/binary_filter.py"
+# Step 1: Determine number of available nodes (idle nodes in 'All' partition)
+echo "Detecting available nodes..."
+NUM_NODES=$(sinfo -h -p All -o "%D" | awk '{s+=$1} END {print s}')
+echo "Detected $NUM_NODES available node(s)."
 
+if [[ -z "$NUM_NODES" || "$NUM_NODES" -lt 1 ]]; then
+    echo "No available nodes detected. Exiting."
+    exit 1
+fi
+
+# Step 2: Run binary_filter.py with number of splits
+echo "Generating $NUM_NODES queue files using binary_filter.py..."
+python3 "$REPO_ROOT/preproc/binary_filter.py" --splits "$NUM_NODES" --output-dir "$QUEUE_DIR"
+
+# Step 3: Submit one job per queue file
 echo "Submitting jobs for each queue file..."
 
 DEPENDENCIES=()
@@ -47,13 +59,12 @@ cd "$REPO_ROOT"
 python3 preproc/decompiler_mult.py "$QUEUE_FILE"
 EOF
 )
+    echo "Submitted job $JOB_ID for $QUEUE_FILE"
     DEPENDENCIES+=($JOB_ID)
 done
 
-# Create dependency list
+# Step 4: Final notification job
 DEPENDENCY_STRING=$(IFS=:; echo "${DEPENDENCIES[*]}")
-
-# Final notification job (runs after all children are done)
 sbatch --dependency=afterok:$DEPENDENCY_STRING --job-name=binai-notify <<EOF
 #!/usr/bin/env bash
 #SBATCH --output=$SLURM_DIR/slurm_notify.out
