@@ -174,7 +174,7 @@ def worker_func(func_addr) -> Tuple[dict, dict]:
     }, times)
 
 
-def extract_function_data_parallel(binary_path, num_workers=4):
+def extract_function_data_parallel(binary_path, num_workers=14):
     project_main = angr.Project(binary_path, auto_load_libs=False)
     print("[*] Generating CFG for lowlevel disassembly...")
     cfg_main = project_main.analyses.CFGFast(normalize=True)
@@ -262,6 +262,8 @@ def filter_queue_file_by_existing_output(queue_file: str, out_dir: str = "out") 
 
     with open(queue_file, "r") as f:
         lines = [line.strip() for line in f if line.strip()]
+    
+    print(len(lines))
 
     for binary_path in lines:
         binary_name = os.path.basename(binary_path)
@@ -322,7 +324,7 @@ def main():
         print(f"\nTotal wall-clock analysis time: {end_time - start_time:.2f} seconds (parallel elapsed time)")
         print(f"[+] Done. Data saved to {csv_path}")
         
-
+        
 if __name__ == "__main__":
     main()
 
