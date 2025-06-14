@@ -1,4 +1,4 @@
-import os
+import os, sys
 import lief
 
 def strip_debug(binary):
@@ -84,22 +84,38 @@ def process_binaries(file_list):
 
         print(f"[INFO] Finished processing {base_filename}. Output files saved.")
 
-# Example Usage:
 if __name__ == "__main__":
+    # Directory containing queue files
+    queue_dir = sys.argv[1]  # The first command line argument should be the queue directory path
+
     # List of ELF binaries to process
     binary_files = []
-    file_path = "queue/queue_1.txt"
-    try:
-        with open(file_path, "r") as file:
-            # Read the file and strip leading/trailing whitespace from each line
-            string_list = [line.strip() for line in file.readlines() if line.strip()]
-            binary_files = string_list
-    except FileNotFoundError:
-        print(f"[Error] The file {file_path} was not found.")
-    except Exception as e:
-        print(f"[Error] An unexpected error occurred: {e}")
-    #binary_files = [
-    #    "./src/openssl/arm32-gcc-9-O3_padlock.so",
-    #]
-    
+
+    # Check if the directory exists
+    if not os.path.isdir(queue_dir):
+        print(f"[Error] The directory {queue_dir} does not exist.")
+        sys.exit(1)
+
+    # Iterate over all files in the queue directory
+    for file_name in os.listdir(queue_dir):
+        file_path = os.path.join(queue_dir, file_name)
+        
+        # Only process text files (queue files)
+        if os.path.isfile(file_path) and file_name.endswith(".txt"):
+            try:
+                with open(file_path, "r") as file:
+                    # Read the file and strip leading/trailing whitespace from each line
+                    string_list = [line.strip() for line in file.readlines() if line.strip()]
+                    binary_files.extend(string_list)  # Add to the list of binaries to process
+            except FileNotFoundError:
+                print(f"[Error] The file {file_path} was not found.")
+            except Exception as e:
+                print(f"[Error] An unexpected error occurred while processing {file_path}: {e}")
+
+    # Check if we found any binaries to process
+    if not binary_files:
+        print("[Error] No binaries to process.")
+        sys.exit(1)
+
+    # Process the binaries
     process_binaries(binary_files)
