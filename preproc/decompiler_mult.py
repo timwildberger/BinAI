@@ -56,19 +56,13 @@ def lowlevel_disas(cfg):
 def highlevel_disas(func) -> str:
     disasm_lines = [str(block.disassembly) for block in func.blocks]
     disasm_str = (" ".join(disasm_lines))
-    #disasm_str = sanitize(" ".join(disasm_lines))
     return disasm_str
-    #return ensure_single_space(disasm_str)
 
 def process_vex_block(addr, block) -> str:
     try:
         if block.vex is None:
             raise ValueError("No VEX IR available")
         irsb_str = str(block.vex)
-        #irsb = remove_newline(irsb_str)
-        #irsb = ensure_single_space(irsb)
-        #temp, body = split_at_first_instruction(irsb)
-        #body2 = remove_three_before_pipe(body)
         return irsb_str
     except Exception as e:
         return f"[!] VEX error @ {hex(addr)}: {type(e).__name__}: {e}"
@@ -97,7 +91,6 @@ def vex_repr(func, project) -> str:
             vex_lines.append(process_vex_block(addr, block))
         except Exception as e:
             vex_lines.append(f"[!] VEX error @ {hex(addr)}: {type(e).__name__}: {e}")
-    #return sanitize(" ".join(vex_lines))
     return (" ".join(vex_lines))
 
 def ail_repr(func, project, man) -> str:
