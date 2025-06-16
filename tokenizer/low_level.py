@@ -51,6 +51,12 @@ def extract_strings_with_addresses(project, section):
 
 
 # CHATGPT TEST
+"""
+String constants are stored in the .rodata section
+
+
+
+"""
 import angr
 import re
 
@@ -66,6 +72,7 @@ def extract_constants_from_section(proj, section):
     data = proj.loader.memory.load(section.vaddr, section.memsize)
     base = section.vaddr
     const_map = {}
+    print(f"DATA: {data}")
 
     # 1. Extract printable ASCII strings as OpaqueConstants
     for match in re.finditer(rb'[ -~]{4,}', data):  # printable ASCII >=4 chars
@@ -106,6 +113,7 @@ def build_constant_map(proj):
         if section.name in ['.rodata', '.data', '.data.rel.ro']:
             const_map = extract_constants_from_section(proj, section)
             combined_map.update(const_map)
+    print(combined_map)
     return combined_map
 
 def annotate_disassembly_with_constants(proj, const_map):
@@ -115,6 +123,7 @@ def annotate_disassembly_with_constants(proj, const_map):
             for insn in block.capstone.insns:
                 tokens = []
                 for op in insn.operands:
+
                     if op.type == 2:  # MEM operand type
                         # op.mem.disp is displacement, effective address approx.
                         addr = op.mem.disp
@@ -155,17 +164,107 @@ def extract_ldis_blocks_from_file(file_path):
                 result[funcname] = blocks
     return result
 
+def register_block_name(id: int) -> str:
+    """
+    Creates tokens for blocks.
+    Block number < 16: Block0 - BlockF
+    Block number > 16: BlockLitStart BlockLit1 BlockLit0 BlockLitEnd
+    """
+    block_name: str = "Block"
+    if id < 16:
+        block_name += f"{str(hex(id)[2:]).upper()}"
+    else:
+        binary_list = list(bin(id)[2:])
+        block_name = "BlockLitStart"
+        for element in binary_list:
+            block_name += f" BlockLit{element}"
+        block_name += " BlockLitEnd"
+    return block_name
+
+
+def lowlevel_disas(cfg):
+    """
+    Operand types:
+    0: Register
+    1: Immediate
+    2: Memory
+    3: FloatingPoint
+
+    ValueConstants (00 to FF representing a constant of exactly that value
+    ValueConstantLiterals (for up to 128 bit values) 
+    OpaqueConstants (16 unique - they represent an opaque value basically for example the representation of the string "HelloWorld" ) 
+    OpaqueConstantLiterals (if a function needs more that 16 OpaqueConstants)
+    """
+    func_disas = {}
+    token_register = {}
+    for func_addr, func in cfg.functions.items():
+        if func.name in ['UnresolvableCallTarget', 'UnresolvableJumpTarget']:
+            continue
+        print("\n")
+        func_name = cfg.functions[func_addr].name
+        index = (func_name, hex(func_addr))
+        temp_bbs = []
+        value_constants = {}
+        value_constant_literals = {}
+
+        block_counter = 0
+        for block in func.blocks:
+            #print(register_block_name(block_counter))
+            block_addr = hex(block.addr)
+
+            disassembly_list = []
+            token_list = []
+            
+            # Single loop over instructions to get both disassembly and immediates
+            for insn in block.capstone.insns:
+                insn_list = []
+                if hasattr(insn, 'operands'):
+                    # go through all operands
+                    for op in insn.operands:
+                        insn_list.append(op.type)
+                        if op.type == 2:
+                            imm_val = op.imm
+                            #print(f"Immediate value: {hex(imm_val)}")
+                            if 0x00 <= imm_val <= 0xFF:
+                                if hex(imm_val) in value_constants:
+                                    value_constants[hex(imm_val)] += 1
+                                else:
+                                    value_constants[hex(imm_val)] = 1
+                                
+                #print((insn.mnemonic, insn.op_str))
+                #print(f"{insn_list}")
+                disassembly_list.append((insn.mnemonic, insn.op_str))
+            
+            temp_bbs.append([block_addr, disassembly_list])
+            block_counter += 1
+
+
+        # handle the constants dict
+        sorted_items = dict(sorted(value_constants.items(), key=lambda item: item[1], reverse=True))
+        for key, value in sorted_items.items():
+            print(f"{key}, {value}")
+
+        func_disas[index] = temp_bbs
+    return func_disas
+
+
+
 
 def main():
 
     file_path = "src/clamav/x86-gcc-9-O3_clambc"
-    print(extract_ldis_blocks_from_file("/Users/timwildberger/Desktop/SS25/BinAI/BinAI/out/openssl/x86-gcc-9-O3_capi.so_functions.csv"))
+    #print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
     
-    project = angr.Project("src/openssl/x86-gcc-9-O3_capi.so", auto_load_libs=False)
-    const_map = build_constant_map(project)
-    annotate_disassembly_with_constants(project, const_map)
-    return
+    project = angr.Project("C:\\Users\\timwi\\Documents\\Uni\\SS25\\BinAI\\BERT_repo\\src\\curl\\x86-gcc-9-O0_curl", auto_load_libs=False)
+    #const_map = build_constant_map(project)
+    #annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
+    d = lowlevel_disas(cfg=cfg)
+    with open("test.txt", encoding="utf-8", mode="w") as f:
+        f.write("Function name, function address, assembly")
+        for key, value in d.items():
+            f.write(f"{key}: {value}\n")    
+    return
     function_bbs = {}
     string_map = {}
     iter = 0
