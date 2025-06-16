@@ -218,7 +218,7 @@ def register_block_name(id: int) -> str:
     return block_name
 
 
-def lowlevel_disas(cfg,):
+def lowlevel_disas(cfg, constant_list):
     """
     Operand types: (in theory)
     0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
@@ -238,6 +238,7 @@ def lowlevel_disas(cfg,):
     - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
     """
     func_disas = {}
+    super_lit = {}
 
     for func_addr, func in cfg.functions.items():
         if func.name in ['UnresolvableCallTarget', 'UnresolvableJumpTarget']:
@@ -332,6 +333,13 @@ def lowlevel_disas(cfg,):
         for key, value in sorted_value_constant_literals.items():
             print(f"{key}, {value}")
 
+
+        subset = {k: sorted_value_constant_literals[k] for k in constant_list if k in sorted_value_constant_literals}
+        if subset:
+            print(f"SUBSET: {subset}")
+            return
+
+
         func_disas[index] = temp_bbs
     return func_disas
 
@@ -346,7 +354,7 @@ def parse_and_save_data_sections(proj, output_txt='parsed_data.txt'):
         for match in re.finditer(b'[\x20-\x7e]{4,}\x00', data):
             s = match.group().rstrip(b'\x00').decode('utf-8', errors='ignore')
             addr = base_addr + match.start()
-            entries.append({'section': '.rodata', 'start': addr, 'end': addr + len(s) + 1, 'value': f'"{s}"'})
+            entries.append({'section': '.rodata', 'start': hex(addr), 'end': hex(addr + len(s) + 1), 'value': f'"{s}"'})
         return entries
 
     def parse_data(data, base_addr, word_size=4, section_name=''):
@@ -356,7 +364,7 @@ def parse_and_save_data_sections(proj, output_txt='parsed_data.txt'):
             if len(chunk) < word_size:
                 continue
             val = int.from_bytes(chunk, byteorder='little')
-            entries.append({'section': section_name, 'start': base_addr + i, 'end': base_addr + i + word_size, 'value': hex(val)})
+            entries.append({'section': section_name, 'start': hex(base_addr + i), 'end': hex(base_addr + i + word_size), 'value': hex(val)})
         return entries
 
     for sec in proj.loader.main_object.sections:
@@ -379,7 +387,7 @@ def parse_and_save_data_sections(proj, output_txt='parsed_data.txt'):
 
     with open(output_txt, 'w') as f:
         for e in all_entries:
-            f.write(f"{e['section']}, {hex(e['start'])} - {hex(e['end'])}: {e['value']}\n")
+            f.write(f"{e['section']}, {e['start']} - {e['end']}: {e['value']}\n")
 
     print(f"Parsed {len(all_entries)} entries from sections {sections_to_parse} and saved to {output_txt}")
     return addr_dict
@@ -391,6 +399,8 @@ def main():
     
     project = angr.Project("C:\\Users\\timwi\\Documents\\Uni\\SS25\\BinAI\\BERT_repo\\src\\curl\\x86-gcc-9-O0_curl", auto_load_libs=False)
     section_data = parse_and_save_data_sections(project)
+    print(section_data)
+    
     #const_map = build_constant_map(project)
     #annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
