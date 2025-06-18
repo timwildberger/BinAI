@@ -238,6 +238,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
     - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
     """
     func_disas = {}
+    func_disas_token = {}
 
     blocks = set()
     for func_addr, func in cfg.functions.items():
@@ -254,7 +255,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         temp_bbs = []
         block_dict = {}
         mnemonics = {}
-        operand_operators = {",", "[", "]", "+", "-", "*"}
+        symbol_tokens = {}
 
         value_constants = {}
         value_constant_literals_candidates = {}
@@ -279,7 +280,8 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                             raise Exception
                         if op.type == 1: # REGISTER
                             print(f"REGISTER: {insn.reg_name(op.reg)}")
-                            print(insn.mnemonic, insn.op_str)
+                            print(f"\t{insn.mnemonic, insn.op_str}")
+                            symbol_tokens[insn.reg_name(op.reg)] = mnemonic_to_token(insn.reg_name(op.reg))
                             # TODO add to tokenizer
                             pass
                         elif op.type == 2: # IMMEDIATE 
@@ -380,8 +382,9 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             pass
             # break
 
+
         temp_tk = []
-        print(temp_bbs)
+        #print(temp_bbs)
         for block_code in temp_bbs:
             #print(block_code)
             block_addr = block_code[0]
@@ -389,19 +392,19 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             for code_snippet in block_code_tuples:
                 #mnemonic_token = mnemonics[code_snippet]
                 print(f"CodeSnippet: {code_snippet}")
-                print(parse_instruction(code_snippet, renamed_value_constants, value_constant_literals, opaque_constants, opaque_constant_literals))
+                print(f"\t{parse_instruction(code_snippet, renamed_value_constants, value_constant_literals, opaque_constants, opaque_constant_literals, mnemonics, symbol_tokens)}")
             temp_tk.append([])
 
-        break
-
+        
         #print(f"Temp bbs: {temp_bbs}")
         #print(f"Sorted subset: {sorted_subset}")
 
         func_disas[index] = temp_bbs
-    return func_disas
+        func_disas_token[index] = temp_tk
+    return func_disas, func_disas_token
 
 
-def parse_instruction(ins, renamed_value_constants, value_constant_literals, opaque_constants, opaque_constant_literals):
+def parse_instruction(ins, renamed_value_constants, value_constant_literals, opaque_constants, opaque_constant_literals, mnemonics, symbol_tokens):
     # arguments:
     # ins: string e.g. "mov, eax, [rax+0x1]"
     # symbol_map: a dict that contains symbols the key is the address and the value is the symbol 
@@ -417,7 +420,17 @@ def parse_instruction(ins, renamed_value_constants, value_constant_literals, opa
     token_lst = []
     if len(parts) > 1:
         operand = parts[1:]
-    token_lst.append(parts[0])
+    
+    tmp_mnemonic = parts[0]
+    mnemonic = tmp_mnemonic[:-1]
+    comma = tmp_mnemonic[-1]
+    if mnemonic in mnemonics.keys():
+        token_lst.append(mnemonics[mnemonic])
+        token_lst.append(comma)
+    else:
+        print(f"Mnemonic {mnemonic} has not been registered.")
+        raise ValueError
+
     for i in range(len(operand)):
         # print(operand)
         symbols = re.split('([0-9A-Za-z]+)', operand[i])
@@ -425,10 +438,6 @@ def parse_instruction(ins, renamed_value_constants, value_constant_literals, opa
         processed = []
         for j in range(len(symbols)):
             if symbols[j][:2] == '0x': 
-                print(symbols[j])
-                
-                # I make a very dumb rule here to treat number larger than 6 but smaller than 15 digits as addresses, 
-                # the others are constant numbers and will not be normalized.
                 if (symbols[j]) in renamed_value_constants:
                     processed.append(renamed_value_constants[symbols[j]][0])
                 elif (symbols[j]) in value_constant_literals:
@@ -452,7 +461,11 @@ def parse_instruction(ins, renamed_value_constants, value_constant_literals, opa
                     processed.append(opaque_constant_literals[hex(symbol)][0])
                 else:
                     processed.append("UNBEKNOWNST")      
+            elif symbols[j] in symbol_tokens.keys():
+                processed.append(symbol_tokens[symbols[j]])
+                #print(symbol_tokens[symbols[j]])
             else:
+                #print(f"SEESLIKCHKERIER: {symbols[j]}")
                 processed.append(symbols[j])
             processed = [p for p in processed if p]
 
@@ -608,16 +621,19 @@ def main():
     
     project = angr.Project("src/curl/x86-clang-3.5-O0_curl", auto_load_libs=False)
     section_data = parse_and_save_data_sections(project)
-    print(section_data)
+    #print(section_data)
     
     #const_map = build_constant_map(project)
     #annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
-    d: dict = lowlevel_disas(cfg, section_data)
+    disassembly, disassembly_tokenized = lowlevel_disas(cfg, section_data)
     with open("test.txt", encoding="utf-8", mode="w") as f:
-        f.write("Function name, function address, assembly")
-        for key, value in d.items():
-            f.write(f"{key}: {value}\n")    
+        f.write("Function name, function address, assembly") 
+        for (k1, v1), (k2, v2) in zip(disassembly.items(), disassembly_tokenized.items()):
+            f.write(f"{k1}: {v1}\n")    
+            f.write(f"{k2}: {v2}\n")
+
+
     return
     function_bbs = {}
     string_map = {}
