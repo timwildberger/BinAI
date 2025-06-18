@@ -3,6 +3,7 @@ import re
 import csv
 from pathlib import Path
 from capstone import *
+from typing import Tuple
 """
 Blöcke 0 bis 16:
 Block0, Block1, ..., BlockF
@@ -218,7 +219,7 @@ def register_block_name(id: int) -> str:
     return block_name
 
 
-def lowlevel_disas(cfg, constant_list):
+def lowlevel_disas(cfg, constant_list) -> dict:
     """
     Operand types: (in theory)
     0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
@@ -238,23 +239,22 @@ def lowlevel_disas(cfg, constant_list):
     - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
     """
     func_disas = {}
-    super_lit = {}
 
     for func_addr, func in cfg.functions.items():
         if func.name in ['UnresolvableCallTarget', 'UnresolvableJumpTarget']:
             continue
 
-        print("\n")
+        #print("\n")
         func_name = cfg.functions[func_addr].name
         index = (func_name, hex(func_addr))
         temp_bbs = []
 
         value_constants = {}
-        value_constant_literals = {}
+        value_constant_literals_candidates = {}
 
         block_counter = 0
         for block in func.blocks:
-            print(register_block_name(block_counter))
+            #print(register_block_name(block_counter))
             block_addr = hex(block.addr)
 
             disassembly_list = []
@@ -283,10 +283,10 @@ def lowlevel_disas(cfg, constant_list):
                                 else:
                                     value_constants[hex(imm_val)] = 1
                             elif 0x100 <= imm_val <= (2**128 - 1):
-                                if hex(imm_val) in value_constant_literals:
-                                    value_constant_literals[hex(imm_val)] += 1
+                                if hex(imm_val) in value_constant_literals_candidates:
+                                    value_constant_literals_candidates[hex(imm_val)] += 1
                                 else:
-                                    value_constant_literals[hex(imm_val)] = 1
+                                    value_constant_literals_candidates[hex(imm_val)] = 1
                         elif op.type == 3: # MEMORY
                             base = insn.reg_name(op.mem.base) if op.mem.base != 0 else None
                             index = insn.reg_name(op.mem.index) if op.mem.index != 0 else None
@@ -309,39 +309,147 @@ def lowlevel_disas(cfg, constant_list):
                                 else:
                                     value_constants[hex(disp)] = 1
                             elif 0x100 <= disp <= (2**128 - 1):
-                                if hex(disp) in value_constant_literals:
-                                    value_constant_literals[hex(disp)] += 1
+                                if hex(disp) in value_constant_literals_candidates:
+                                    value_constant_literals_candidates[hex(disp)] += 1
                                 else:
-                                    value_constant_literals[hex(disp)] = 1
+                                    value_constant_literals_candidates[hex(disp)] = 1
                             print(insn.mnemonic, insn.op_str)
                             # TODO check what to do with negative offset
 
                                 
-                print((insn.mnemonic, insn.op_str))
-                print(f"Operand types: {insn_list}")
+                #print((insn.mnemonic, insn.op_str))
+                #print(f"Operand types: {insn_list}")
                 disassembly_list.append((insn.mnemonic, insn.op_str))
+                if insn.mnemonic == "call":
+                    print((insn.mnemonic, insn.op_str))
             
             temp_bbs.append([block_addr, disassembly_list])
             block_counter += 1
 
 
         # handle the constants dict
-        sorted_value_constants = dict(sorted(value_constants.items(), key=lambda item: item[1], reverse=True))
-        for key, value in sorted_value_constants.items():
+        # VALUE CONSTANTS 0x00 bis 0xFF
+        #sorted_value_constants = dict(sorted(value_constants.items(), key=lambda item: item[1], reverse=True))
+        sorted_value_constants = value_constants
+        renamed_value_constants = name_value_constants(sorted_value_constants)
+        print(f"\nValue Constants")
+        for key, value in renamed_value_constants.items():
             print(f"{key}, {value}")
-        sorted_value_constant_literals = dict(sorted(value_constant_literals.items(), key=lambda item: item[1], reverse=True))
-        for key, value in sorted_value_constant_literals.items():
+            pass
+        
+        # Take all candidates for value constant literals and check which of those are known constants
+        # First, sort the items once
+        sorted_items = sorted(value_constant_literals_candidates.items(), key=lambda item: item[1], reverse=True)
+
+        # Then, iterate once and split into matching and non-matching
+        matching = {}
+        non_matching = {}
+        for k, v in sorted_items:
+            if k in constant_list:
+                matching[k] = v
+            else:
+                non_matching[k] = v
+
+
+        sorted_matching = dict(sorted(matching.items(), key= lambda item: item[1], reverse=True))
+        sorted_non_matching = dict(sorted(non_matching.items(), key= lambda item: item[1], reverse=True))
+        value_constant_literals = name_value_constant_literals(sorted_matching)
+        print("Value Constant Literals")
+        for key, value in value_constant_literals.items():
             print(f"{key}, {value}")
+            pass
+        
+        opaque_constants, opaque_constant_literals = name_opaque_constants(sorted_non_matching)
+        print("Opaque Constants")
+        for key, value in opaque_constants.items():
+            print(f"{key}, {value}")
+            pass
+        print("Opaque Constant Literals")
+        for key, value in opaque_constant_literals.items():
+            print(f"{key}, {value}")
+            pass
+        if matching:
+            break
 
 
-        subset = {k: sorted_value_constant_literals[k] for k in constant_list if k in sorted_value_constant_literals}
-        if subset:
-            print(f"SUBSET: {subset}")
-            return
-
+        #print(f"Temp bbs: {temp_bbs}")
+        #print(f"Sorted subset: {sorted_subset}")
 
         func_disas[index] = temp_bbs
     return func_disas
+
+"""
+    - ValueConstants: 0x00 to 0xFF
+    - ValueConstantLiterals: larger static values (up to 128-bit)
+    - OpaqueConstants: memory references using base registers or unresolved values
+    - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
+"""
+
+def name_opaque_constants(occ: dict) -> tuple[dict[str, tuple[str, int]], dict[str, tuple[str, int]]]:
+    """
+    Takes a dict of all addresses that do not point to a known constant. Assigns the first 16 to OPAQUE_CONSTANTS, the rest to OPAQUE_CONSTANT_LITERALS
+    
+    Args:
+        occ (dict[address, occurence])
+
+    Returns:
+        Tuple(dict[const_name: tuple(address, occurence)], dict[const_name: tuple(address, occurence)])
+    
+    
+    
+    """
+    arch_name = "x86"
+    counter = 0
+    opaque_constants = {}
+    opaque_constant_literals = {}
+    for addr, freq in occ.items():
+        if counter < 16:
+            new_name = f"{arch_name}_OP_CONST_{counter}"
+            opaque_constants[new_name] = (addr, freq)
+        else:
+            new_name = f"{arch_name}_OP_CONST_LIT_{counter}"
+            opaque_constant_literals[new_name] = (addr, freq)
+        counter += 1
+    return opaque_constants, opaque_constant_literals
+
+
+def name_value_constant_literals(vcl: dict) -> dict[str, tuple[str, int]]:
+    """
+    Takes a sorted dict of value constant literals and gives them a descriptive token name: e.g. 0x7c --> x86_VALCONST_124
+
+    Args:
+        vc (dict): Previously sorted dict of hex value constant literals and their number of occurences within a function.
+
+    Returns:
+        renamed_dict (dict): Mapping from new constant name to tuple of value constant literal: occurences.
+    """
+    arch_name = "x86"
+    renamed_dict = {}
+    counter = 0
+    for (addr, freq) in vcl.items():
+        new_name = f"{arch_name}_VAL_CONST_LIT_{counter}"
+        renamed_dict[new_name] = (addr, freq)
+        counter += 1
+    return renamed_dict
+
+
+def name_value_constants(vc: dict) -> dict[str, tuple[str, int]]:
+    """
+    Takes a sorted dict of value constants and gives them a descriptive token name: e.g. 0x7c --> x86_VALCONST_124
+
+    Args:
+        vc (dict): Previously sorted dict of hex value constants and their number of occurences within a function.
+
+    Returns:
+        renamed_dict (dict): Mapping from new constant name to tuple of value constant : occurences.
+    """
+    arch_name = "x86"
+    renamed_dict = {}
+    for (addr, freq) in vc.items():
+        new_name = f"{arch_name}_VAL_CONST_{int(addr, 16)}"
+        renamed_dict[new_name] = (addr, freq)
+    return renamed_dict
+
 
 def parse_and_save_data_sections(proj, output_txt='parsed_data.txt'):
     sections_to_parse = ['.rodata', '.data', '.data.rel.ro']
@@ -397,14 +505,14 @@ def main():
     file_path = "src/clamav/x86-gcc-9-O3_clambc"
     #print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
     
-    project = angr.Project("C:\\Users\\timwi\\Documents\\Uni\\SS25\\BinAI\\BERT_repo\\src\\curl\\x86-gcc-9-O0_curl", auto_load_libs=False)
+    project = angr.Project("src/curl/x86-clang-3.5-O0_curl", auto_load_libs=False)
     section_data = parse_and_save_data_sections(project)
     print(section_data)
     
     #const_map = build_constant_map(project)
     #annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
-    d = lowlevel_disas(cfg, section_data)
+    d: dict = lowlevel_disas(cfg, section_data)
     with open("test.txt", encoding="utf-8", mode="w") as f:
         f.write("Function name, function address, assembly")
         for key, value in d.items():
