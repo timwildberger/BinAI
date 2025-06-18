@@ -201,22 +201,21 @@ def is_address(addr, addr_ranges):
             return True
     return False    
 
-def register_block_name(id: int) -> str:
+def register_name_range(id: int, basename) -> str:
     """
     Creates tokens for blocks.
     Block number < 16: Block0 - BlockF
     Block number > 16: BlockLitStart BlockLit1 BlockLit0 BlockLitEnd
     """
-    block_name: str = "Block"
     if id < 16:
-        block_name += f"{str(hex(id)[2:]).upper()}"
+        name = f"{basename}{str(hex(id)[2:]).upper()}"
     else:
         binary_list = list(bin(id)[2:])
-        block_name = "BlockLitStart"
+        name = f"{basename}LitStart"
         for element in binary_list:
-            block_name += f" BlockLit{element}"
-        block_name += " BlockLitEnd"
-    return block_name
+            name += f" {basename}Lit{element}"
+        name += f" {basename}LitEnd"
+    return name
 
 
 def lowlevel_disas(cfg, constant_list) -> dict:
@@ -240,6 +239,11 @@ def lowlevel_disas(cfg, constant_list) -> dict:
     """
     func_disas = {}
 
+    blocks = set()
+    for func_addr, func in cfg.functions.items():
+        for block in func.blocks:
+            blocks.add(hex(block.addr))
+
     for func_addr, func in cfg.functions.items():
         if func.name in ['UnresolvableCallTarget', 'UnresolvableJumpTarget']:
             continue
@@ -248,14 +252,17 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         func_name = cfg.functions[func_addr].name
         index = (func_name, hex(func_addr))
         temp_bbs = []
+        block_dict = {}
+        mnemonics = {}
+        operand_operators = {",", "[", "]", "+", "-", "*"}
 
         value_constants = {}
         value_constant_literals_candidates = {}
 
         block_counter = 0
         for block in func.blocks:
-            #print(register_block_name(block_counter))
             block_addr = hex(block.addr)
+            block_dict[block_addr] = register_name_range(block_counter, basename="Block")
 
             disassembly_list = []
             
@@ -271,12 +278,14 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                             print("WHAAAAAAAAAAAAAAAAAAAAAT")
                             raise Exception
                         if op.type == 1: # REGISTER
-                            #print(f"REGISTER: {insn.reg_name(op.reg)}")
+                            print(f"REGISTER: {insn.reg_name(op.reg)}")
+                            print(insn.mnemonic, insn.op_str)
                             # TODO add to tokenizer
                             pass
                         elif op.type == 2: # IMMEDIATE 
                             imm_val = op.imm
-                            #print(f"IMMEDIATE {hex(imm_val)}")
+                            print(f"IMMEDIATE {imm_val}")
+                            print(insn.mnemonic, insn.op_str)
                             if 0x00 <= imm_val <= 0xFF:
                                 if hex(imm_val) in value_constants:
                                     value_constants[hex(imm_val)] += 1
@@ -287,20 +296,16 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                                     value_constant_literals_candidates[hex(imm_val)] += 1
                                 else:
                                     value_constant_literals_candidates[hex(imm_val)] = 1
+                            else:
+                                print("PENIS")
                         elif op.type == 3: # MEMORY
                             base = insn.reg_name(op.mem.base) if op.mem.base != 0 else None
                             index = insn.reg_name(op.mem.index) if op.mem.index != 0 else None
                             scale = op.mem.scale
                             disp = op.mem.disp
-                            op_type: str
-                            if op.size == 1:
-                                op_type = "byte ptr"
-                            elif op.size == 2:
-                                op_type = "word ptr"
-                            elif op.size == 4:
-                                op_type = "dword ptr"
-                            elif op.size == 8:
-                                op_type = "qword ptr"
+
+                            # dtype byte ptr, word ptr, dword ptr, qword ptr 
+                            op_type: str = get_memory_op_type(op.size)
                             print(f"Memory operand: base={base}, index={index}, scale={scale}, disp={hex(disp)}, type={op_type}")
                             disp = abs(disp)
                             if 0x00 <= disp <= 0xFF:
@@ -313,15 +318,16 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                                     value_constant_literals_candidates[hex(disp)] += 1
                                 else:
                                     value_constant_literals_candidates[hex(disp)] = 1
-                            print(insn.mnemonic, insn.op_str)
+                            
                             # TODO check what to do with negative offset
+                            # TODO Split Literals in the same way as the blocks
 
                                 
                 #print((insn.mnemonic, insn.op_str))
                 #print(f"Operand types: {insn_list}")
-                disassembly_list.append((insn.mnemonic, insn.op_str))
-                if insn.mnemonic == "call":
-                    print((insn.mnemonic, insn.op_str))
+                disassembly_list.append(f"{insn.mnemonic}, {insn.op_str}")
+                print(insn.mnemonic, insn.op_str)
+                mnemonics[insn.mnemonic] = mnemonic_to_token(insn.mnemonic)
             
             temp_bbs.append([block_addr, disassembly_list])
             block_counter += 1
@@ -347,6 +353,8 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         for k, v in sorted_items:
             if k in constant_list:
                 matching[k] = v
+            elif k in blocks:
+                matching[k] = v
             else:
                 non_matching[k] = v
 
@@ -369,14 +377,113 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             print(f"{key}, {value}")
             pass
         if matching:
-            break
+            pass
+            # break
 
+        temp_tk = []
+        print(temp_bbs)
+        for block_code in temp_bbs:
+            #print(block_code)
+            block_addr = block_code[0]
+            block_code_tuples = block_code[1]
+            for code_snippet in block_code_tuples:
+                #mnemonic_token = mnemonics[code_snippet]
+                print(f"CodeSnippet: {code_snippet}")
+                print(parse_instruction(code_snippet, renamed_value_constants, value_constant_literals, opaque_constants, opaque_constant_literals))
+            temp_tk.append([])
+
+        break
 
         #print(f"Temp bbs: {temp_bbs}")
         #print(f"Sorted subset: {sorted_subset}")
 
         func_disas[index] = temp_bbs
     return func_disas
+
+
+def parse_instruction(ins, renamed_value_constants, value_constant_literals, opaque_constants, opaque_constant_literals):
+    # arguments:
+    # ins: string e.g. "mov, eax, [rax+0x1]"
+    # symbol_map: a dict that contains symbols the key is the address and the value is the symbol 
+    # string_map : same as symbol_map in Binary Ninja, constant strings will be included into string_map 
+    #              and the other meaningful strings like function names will be included into the symbol_map
+    #              I think you do not have to separate them. This is just one of the possible nomailization stretagies.
+    ins = re.sub('\s+', ', ', ins, 1)
+    parts = ins.split(', ')
+
+    #print(parts)
+    
+    operand = []
+    token_lst = []
+    if len(parts) > 1:
+        operand = parts[1:]
+    token_lst.append(parts[0])
+    for i in range(len(operand)):
+        # print(operand)
+        symbols = re.split('([0-9A-Za-z]+)', operand[i])
+        symbols = [s.strip() for s in symbols if s]
+        processed = []
+        for j in range(len(symbols)):
+            if symbols[j][:2] == '0x': 
+                print(symbols[j])
+                
+                # I make a very dumb rule here to treat number larger than 6 but smaller than 15 digits as addresses, 
+                # the others are constant numbers and will not be normalized.
+                if (symbols[j]) in renamed_value_constants:
+                    processed.append(renamed_value_constants[symbols[j]][0])
+                elif (symbols[j]) in value_constant_literals:
+                    processed.append(value_constant_literals[symbols[j]][0])
+                elif symbols[j] in opaque_constants:
+                    processed.append(opaque_constants[symbols[j]][0])
+                elif symbols[j] in opaque_constant_literals:
+                    processed.append(opaque_constant_literals[symbols[j]][0])
+                else:
+                    processed.append("UNBEKNOWNST")       
+            elif symbols[j].isdigit():
+                symbol = int(symbols[j])
+                
+                if hex(symbol) in renamed_value_constants:
+                    processed.append(renamed_value_constants[hex(symbol)][0])
+                elif hex(symbol) in value_constant_literals:
+                    processed.append(value_constant_literals[hex(symbol)][0])
+                elif hex(symbol) in opaque_constants:
+                    processed.append(opaque_constants[hex(symbol)][0])
+                elif hex(symbol) in opaque_constant_literals:
+                    processed.append(opaque_constant_literals[hex(symbol)][0])
+                else:
+                    processed.append("UNBEKNOWNST")      
+            else:
+                processed.append(symbols[j])
+            processed = [p for p in processed if p]
+
+        token_lst.extend(processed) 
+
+    # the output will be like "mov eax [ rax + 0x1 ]"
+    return ' '.join(token_lst)
+
+def mnemonic_to_token(mnemonic) -> str:
+    return f"x86_{mnemonic.upper()}"
+
+
+def get_memory_op_type(size: int) -> str:
+    if size == 1:                         
+        return "byte ptr"
+    elif size == 2:
+        return "word ptr"
+    elif size == 4:
+        return "dword ptr"
+    elif size == 8:
+        return "qword ptr"
+    elif size == 16:
+        return "xmmword ptr"
+    elif size == 32:
+        return "ymmword ptr"
+    elif size == 64:
+        return "zmmword ptr"
+    elif size == 8192:
+        return "tmmword ptr"
+    else:
+        raise ValueError
 
 """
     - ValueConstants: 0x00 to 0xFF
@@ -394,21 +501,17 @@ def name_opaque_constants(occ: dict) -> tuple[dict[str, tuple[str, int]], dict[s
 
     Returns:
         Tuple(dict[const_name: tuple(address, occurence)], dict[const_name: tuple(address, occurence)])
-    
-    
-    
     """
-    arch_name = "x86"
     counter = 0
     opaque_constants = {}
     opaque_constant_literals = {}
     for addr, freq in occ.items():
         if counter < 16:
-            new_name = f"{arch_name}_OP_CONST_{counter}"
-            opaque_constants[new_name] = (addr, freq)
+            new_name = f"OP_CONST_{counter}"
+            opaque_constants[addr] = (new_name, freq)
         else:
-            new_name = f"{arch_name}_OP_CONST_LIT_{counter}"
-            opaque_constant_literals[new_name] = (addr, freq)
+            new_name = register_name_range(counter, "OP_CONST_LIT_")
+            opaque_constant_literals[addr] = (new_name, freq)
         counter += 1
     return opaque_constants, opaque_constant_literals
 
@@ -423,12 +526,11 @@ def name_value_constant_literals(vcl: dict) -> dict[str, tuple[str, int]]:
     Returns:
         renamed_dict (dict): Mapping from new constant name to tuple of value constant literal: occurences.
     """
-    arch_name = "x86"
     renamed_dict = {}
     counter = 0
     for (addr, freq) in vcl.items():
-        new_name = f"{arch_name}_VAL_CONST_LIT_{counter}"
-        renamed_dict[new_name] = (addr, freq)
+        new_name = f"VAL_CONST_LIT_{counter}"
+        renamed_dict[addr] = (new_name, freq)
         counter += 1
     return renamed_dict
 
@@ -443,11 +545,10 @@ def name_value_constants(vc: dict) -> dict[str, tuple[str, int]]:
     Returns:
         renamed_dict (dict): Mapping from new constant name to tuple of value constant : occurences.
     """
-    arch_name = "x86"
     renamed_dict = {}
     for (addr, freq) in vc.items():
-        new_name = f"{arch_name}_VAL_CONST_{int(addr, 16)}"
-        renamed_dict[new_name] = (addr, freq)
+        new_name = f"VAL_CONST_{int(addr, 16)}"
+        renamed_dict[addr] = (new_name, freq)
     return renamed_dict
 
 
