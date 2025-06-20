@@ -239,6 +239,20 @@ def lowlevel_disas(cfg, constant_list) -> dict:
     """
     func_disas = {}
     func_disas_token = {}
+    inv_prefix_tokens = {
+        "0xF0": "x86_lock",
+        "0xF2": "x86_repne",  # note: both x86_repne and x86_repnz use 0xF2
+        "0xF3": "x86_rep",    # note: both x86_rep and x86_repz use 0xF3
+        "0x26": "x86_es:",
+        "0x2E": "x86_cs:",
+        "0x36": "x86_ss:",
+        "0x3E": "x86_ds:",
+        "0x64": "x86_fs:",
+        "0x65": "x86_gs:",
+        "0x66": "x86_operand_size_override",
+        "0x67": "x86_address-size_override"
+    }
+
 
     blocks = set()
     for func_addr, func in cfg.functions.items():
@@ -257,8 +271,9 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         mnemonics = {}
         symbol_tokens = {}
 
-        value_constants = {}
-        value_constant_literals_candidates = {}
+        value_constants: dict[str, int] = {}
+        value_constants_negative: dict[str, int] = {}
+        value_constant_literals_candidates: dict[str, int] = {}
 
         block_counter = 0
         for block in func.blocks:
@@ -269,6 +284,24 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             
             # Single loop over instructions to get both disassembly and immediates
             for insn in block.capstone.insns:
+                # Extract non-zero prefixes (up to 4 bytes)
+                prefix_bytes = [f"0x{b:02X}" for b in insn.prefix if b != 0]
+                #print(f"prefix bytes: {prefix_bytes}")
+
+                # Register prefix tokens
+                for byte in prefix_bytes:
+                    if byte in inv_prefix_tokens:
+                        prefix_name = inv_prefix_tokens[byte]
+                        if prefix_name not in mnemonics:
+                            mnemonics[prefix_name] = mnemonic_to_token(prefix_name)
+                        symbol_tokens[prefix_name] = mnemonics[prefix_name]
+
+                #print(f"Original capstone object: {insn.insn}")
+                #print(f"Original prefix: {insn.insn.prefix}")
+                #print((insn.prefix))
+                if insn.prefix != [0,0,0,0]:
+                    #print("SOMETHINGS UP HERE!s")
+                    pass
                 insn_list = []
                 if hasattr(insn, 'operands'):
                     #print("\n")
@@ -276,30 +309,40 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                     for op in insn.operands:
                         insn_list.append(op.type)
                         if op.type == 0 or op.type > 3:
-                            print("WHAAAAAAAAAAAAAAAAAAAAAT")
+                            #print("WHAAAAAAAAAAAAAAAAAAAAAT")
                             raise Exception
                         if op.type == 1: # REGISTER
-                            print(f"REGISTER: {insn.reg_name(op.reg)}")
-                            print(f"\t{insn.mnemonic, insn.op_str}")
+                            #print(f"REGISTER: {insn.reg_name(op.reg)}")
+                            #print(f"\t{insn.mnemonic, insn.op_str}")
                             symbol_tokens[insn.reg_name(op.reg)] = mnemonic_to_token(insn.reg_name(op.reg))
                             # TODO add to tokenizer
                             pass
                         elif op.type == 2: # IMMEDIATE 
                             imm_val = op.imm
-                            print(f"IMMEDIATE {imm_val}")
-                            print(insn.mnemonic, insn.op_str)
+                            #print(f"IMMEDIATE {imm_val}")
+                            #print(insn.mnemonic, insn.op_str)
+                            
                             if 0x00 <= imm_val <= 0xFF:
                                 if hex(imm_val) in value_constants:
                                     value_constants[hex(imm_val)] += 1
                                 else:
                                     value_constants[hex(imm_val)] = 1
-                            elif 0x100 <= imm_val <= (2**128 - 1):
+                            elif -0x80 <= imm_val <= -0x01:
+                                if hex(imm_val) in value_constants_negative:
+                                    value_constants_negative[hex(imm_val)] += 1
+                                else:
+                                    value_constants[hex(imm_val)] = 1                               
+                            elif 0x100 <= imm_val <= (2**128 - 1) or (-2**127) <= imm_val <= -0x100:
                                 if hex(imm_val) in value_constant_literals_candidates:
                                     value_constant_literals_candidates[hex(imm_val)] += 1
                                 else:
                                     value_constant_literals_candidates[hex(imm_val)] = 1
                             else:
-                                print("PENIS")
+                                print(f"imm_val: {imm_val}, insn: {insn.mnemonic} {insn.op_str}, prefixes: {[
+                        inv_prefix_tokens[f"0x{b:02X}"]
+                        for b in insn.prefix if b != 0 and f"0x{b:02X}" in inv_prefix_tokens
+                    ]}")
+                                raise ValueError
                         elif op.type == 3: # MEMORY
                             base = insn.reg_name(op.mem.base) if op.mem.base != 0 else None
                             index = insn.reg_name(op.mem.index) if op.mem.index != 0 else None
@@ -308,14 +351,21 @@ def lowlevel_disas(cfg, constant_list) -> dict:
 
                             # dtype byte ptr, word ptr, dword ptr, qword ptr 
                             op_type: str = get_memory_op_type(op.size)
-                            print(f"Memory operand: base={base}, index={index}, scale={scale}, disp={hex(disp)}, type={op_type}")
+                            #print(f"Memory operand: base={base}, index={index}, scale={scale}, disp={hex(disp)}, type={op_type}")
                             disp = abs(disp)
                             if 0x00 <= disp <= 0xFF:
                                 if hex(disp) in value_constants:
                                     value_constants[hex(disp)] += 1
                                 else:
                                     value_constants[hex(disp)] = 1
-                            elif 0x100 <= disp <= (2**128 - 1):
+                            elif -0x80 <= disp <= -0x01:
+                                if hex(disp) in value_constants_negative:
+                                    value_constants_negative[hex(disp)] += 1
+                                else:
+                                    value_constants[hex(disp)] = 1        
+                                print(disp)
+                                raise ValueError
+                            elif 0x100 <= disp <= (2**128 - 1) or (-2**127) <= disp <= -0x100:
                                 if hex(disp) in value_constant_literals_candidates:
                                     value_constant_literals_candidates[hex(disp)] += 1
                                 else:
@@ -324,12 +374,27 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                             # TODO check what to do with negative offset
                             # TODO Split Literals in the same way as the blocks
 
-                                
+                else:
+                    print(f"INSTRUCTION WITHOUT OEPRANDS: {insn}")
+                    raise TypeError
                 #print((insn.mnemonic, insn.op_str))
                 #print(f"Operand types: {insn_list}")
-                disassembly_list.append(f"{insn.mnemonic}, {insn.op_str}")
-                print(insn.mnemonic, insn.op_str)
-                mnemonics[insn.mnemonic] = mnemonic_to_token(insn.mnemonic)
+                disassembly_list.append({
+                    "mnemonic": insn.mnemonic,
+                    "op_str": insn.op_str,
+                    "prefixes": [
+                        inv_prefix_tokens[f"0x{b:02X}"]
+                        for b in insn.prefix if b != 0 and f"0x{b:02X}" in inv_prefix_tokens
+                    ]
+                })            
+                #print(insn.mnemonic, insn.op_str)
+
+                # Use only the mnemonic itself, without prefixes
+                mnemonic = insn.mnemonic.strip()
+
+                # Register the base mnemonic token if not already done
+                if mnemonic not in mnemonics:
+                    mnemonics[mnemonic] = mnemonic_to_token(mnemonic)
             
             temp_bbs.append([block_addr, disassembly_list])
             block_counter += 1
@@ -338,12 +403,13 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         # handle the constants dict
         # VALUE CONSTANTS 0x00 bis 0xFF
         #sorted_value_constants = dict(sorted(value_constants.items(), key=lambda item: item[1], reverse=True))
-        sorted_value_constants = value_constants
-        renamed_value_constants = name_value_constants(sorted_value_constants)
-        print(f"\nValue Constants")
-        for key, value in renamed_value_constants.items():
-            print(f"{key}, {value}")
-            pass
+        renamed_value_constants = name_value_constants(value_constants)
+        renamed_value_constants_negative = name_value_constants(value_constants_negative)
+        if len(renamed_value_constants) != 0:
+            #print(f"\nValue Constants")
+            for key, value in renamed_value_constants.items():
+                #print(f"{key}, {value}")
+                pass
         
         # Take all candidates for value constant literals and check which of those are known constants
         # First, sort the items once
@@ -364,23 +430,23 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         sorted_matching = dict(sorted(matching.items(), key= lambda item: item[1], reverse=True))
         sorted_non_matching = dict(sorted(non_matching.items(), key= lambda item: item[1], reverse=True))
         value_constant_literals = name_value_constant_literals(sorted_matching)
-        print("Value Constant Literals")
-        for key, value in value_constant_literals.items():
-            print(f"{key}, {value}")
-            pass
+        if len(value_constant_literals) != 0:
+            #print("Value Constant Literals")
+            for key, value in value_constant_literals.items():
+                #print(f"{key}, {value}")
+                pass
         
         opaque_constants, opaque_constant_literals = name_opaque_constants(sorted_non_matching)
-        print("Opaque Constants")
-        for key, value in opaque_constants.items():
-            print(f"{key}, {value}")
-            pass
-        print("Opaque Constant Literals")
-        for key, value in opaque_constant_literals.items():
-            print(f"{key}, {value}")
-            pass
-        if matching:
-            pass
-            # break
+        if len(opaque_constants) != 0:
+            #print("Opaque Constants")
+            for key, value in opaque_constants.items():
+                #print(f"{key}, {value}")
+                pass
+        if len(opaque_constant_literals) != 0:
+            #print("Opaque Constant Literals")
+            for key, value in opaque_constant_literals.items():
+                #print(f"{key}, {value}")
+                pass
 
 
         temp_tk = []
@@ -391,92 +457,128 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             block_code_tuples = block_code[1]
             for code_snippet in block_code_tuples:
                 #mnemonic_token = mnemonics[code_snippet]
-                print(f"CodeSnippet: {code_snippet}")
-                print(f"\t{parse_instruction(code_snippet, renamed_value_constants, value_constant_literals, opaque_constants, opaque_constant_literals, mnemonics, symbol_tokens)}")
-            temp_tk.append([])
+                #print(f"CodeSnippet: {code_snippet}")
+                # Extract prefix names from instruction object for this instruction
+                prefix_bytes = [f"0x{b:02X}" for b in insn.prefix if b != 0]
+                prefix_names = [inv_prefix_tokens[b] for b in prefix_bytes if b in inv_prefix_tokens]
 
+                # Save tokenized instruction with prefixes passed in
+                try:
+                    token_stream = parse_instruction(
+                            code_snippet,
+                            renamed_value_constants, 
+                            renamed_value_constants_negative,
+                            value_constant_literals,
+                            opaque_constants,
+                            opaque_constant_literals,
+                            mnemonics,
+                            symbol_tokens
+                        )
+                except ValueError as e:
+                    print(e)
+                    raise ValueError
+                #print(f"TOKEN STREAM: {token_stream}")
+                temp_tk.append(
+                    token_stream
+                )
         
         #print(f"Temp bbs: {temp_bbs}")
-        #print(f"Sorted subset: {sorted_subset}")
+        #print(f"Token temp: {temp_tk}")
 
         func_disas[index] = temp_bbs
         func_disas_token[index] = temp_tk
-    return func_disas, func_disas_token
+    return (func_disas, func_disas_token)
 
-
-def parse_instruction(ins, renamed_value_constants, value_constant_literals, opaque_constants, opaque_constant_literals, mnemonics, symbol_tokens):
-    # arguments:
-    # ins: string e.g. "mov, eax, [rax+0x1]"
-    # symbol_map: a dict that contains symbols the key is the address and the value is the symbol 
-    # string_map : same as symbol_map in Binary Ninja, constant strings will be included into string_map 
-    #              and the other meaningful strings like function names will be included into the symbol_map
-    #              I think you do not have to separate them. This is just one of the possible nomailization stretagies.
-    ins = re.sub('\s+', ', ', ins, 1)
-    parts = ins.split(', ')
-
-    #print(parts)
+def parse_instruction(ins_dict, renamed_value_constants, renamed_value_constants_negative, value_constant_literals, opaque_constants, opaque_constant_literals, mnemonics, symbol_tokens):
+    """
+    Tokenizes a single instruction dictionary into prefix, mnemonic, and operand tokens.
     
-    operand = []
+    Args:
+        ins_dict (dict): {
+            'mnemonic': str,
+            'op_str': str,
+            'prefixes': list[str]  # e.g., ['x86_lock']
+        }
+        renamed_value_constants: dict
+        value_constant_literals: dict
+        opaque_constants: dict
+        opaque_constant_literals: dict
+        mnemonics: dict of mnemonic -> token
+        symbol_tokens: dict of symbol (register, prefix, etc.) -> token
+
+    Returns:
+        str: space-separated tokenized instruction
+    """
+    SIZE_SPECIFIERS = {
+        "byte": "x86_BYTE_PTR",
+        "word": "x86_WORD_PTR",
+        "dword": "x86_DWORD_PTR",
+        "qword": "x86_QWORD_PTR",
+        "xmmword" : "x86_XMMWORD_PTR",
+        "ymmword" : "x86_YMMWORD_PTR",
+        "zmmword" : "x86_ZMMWORD_PTR",
+        "tmmword" : "x86_ZMMWORD_PTR"
+    }
+
+    mnemonic = ins_dict["mnemonic"]
+    op_str = ins_dict["op_str"]
+    prefixes = ins_dict.get("prefixes", [])
+
     token_lst = []
-    if len(parts) > 1:
-        operand = parts[1:]
-    
-    tmp_mnemonic = parts[0]
-    mnemonic = tmp_mnemonic[:-1]
-    comma = tmp_mnemonic[-1]
-    if mnemonic in mnemonics.keys():
+
+    # Add prefix tokens first
+    for prefix in prefixes:
+        if prefix in symbol_tokens:
+            token_lst.append(symbol_tokens[prefix])
+        else:
+            token_lst.append(f"UNKNOWN_PREFIX_{prefix}")
+
+    # Add mnemonic token
+    if mnemonic in mnemonics:
         token_lst.append(mnemonics[mnemonic])
-        token_lst.append(comma)
     else:
-        print(f"Mnemonic {mnemonic} has not been registered.")
-        raise ValueError
+        raise ValueError(f"Mnemonic {mnemonic} has not been registered.")
 
-    for i in range(len(operand)):
-        # print(operand)
-        symbols = re.split('([0-9A-Za-z]+)', operand[i])
-        symbols = [s.strip() for s in symbols if s]
-        processed = []
-        for j in range(len(symbols)):
-            if symbols[j][:2] == '0x': 
-                if (symbols[j]) in renamed_value_constants:
-                    processed.append(renamed_value_constants[symbols[j]][0])
-                elif (symbols[j]) in value_constant_literals:
-                    processed.append(value_constant_literals[symbols[j]][0])
-                elif symbols[j] in opaque_constants:
-                    processed.append(opaque_constants[symbols[j]][0])
-                elif symbols[j] in opaque_constant_literals:
-                    processed.append(opaque_constant_literals[symbols[j]][0])
+    # Handle operands
+    if op_str:
+        operand = op_str.split(', ')
+        for i in range(len(operand)):
+            symbols = re.split(r'([0-9A-Za-z_]+)', operand[i])
+            symbols = [s.strip() for s in symbols if s]
+            print(symbols)
+            processed = []
+
+            for s in symbols:
+                if s.lower() == "ptr": # skip token solely reserved to make code more human-readable
+                    continue  # skip ptr entirely
+                if s.startswith("0x"):  # hex constants
+                    processed.append(resolve_constant(s, renamed_value_constants, renamed_value_constants_negative, value_constant_literals, opaque_constants, opaque_constant_literals))
+                elif s.isdigit():       # byte constants
+                    processed.append(resolve_constant(hex(int(s)), renamed_value_constants, renamed_value_constants_negative, value_constant_literals, opaque_constants, opaque_constant_literals))
+                print(f"KEYS: {SIZE_SPECIFIERS.keys()}")
+                if s in SIZE_SPECIFIERS.keys():
+                    processed.append(SIZE_SPECIFIERS[s])
+                elif s in symbol_tokens:
+                    processed.append(symbol_tokens[s])
                 else:
-                    processed.append("UNBEKNOWNST")       
-            elif symbols[j].isdigit():
-                symbol = int(symbols[j])
-                
-                if hex(symbol) in renamed_value_constants:
-                    processed.append(renamed_value_constants[hex(symbol)][0])
-                elif hex(symbol) in value_constant_literals:
-                    processed.append(value_constant_literals[hex(symbol)][0])
-                elif hex(symbol) in opaque_constants:
-                    processed.append(opaque_constants[hex(symbol)][0])
-                elif hex(symbol) in opaque_constant_literals:
-                    processed.append(opaque_constant_literals[hex(symbol)][0])
-                else:
-                    processed.append("UNBEKNOWNST")      
-            elif symbols[j] in symbol_tokens.keys():
-                processed.append(symbol_tokens[symbols[j]])
-                #print(symbol_tokens[symbols[j]])
-            else:
-                #print(f"SEESLIKCHKERIER: {symbols[j]}")
-                processed.append(symbols[j])
-            processed = [p for p in processed if p]
+                    processed.append(s)
 
-        token_lst.extend(processed) 
+            token_lst.extend(processed)
 
-    # the output will be like "mov eax [ rax + 0x1 ]"
     return ' '.join(token_lst)
 
 def mnemonic_to_token(mnemonic) -> str:
     return f"x86_{mnemonic.upper()}"
 
+def resolve_constant(s, renamed_value_constants, renamed_value_constants_negative, value_constant_literals, opaque_constants, opaque_constant_literals):
+    return (
+        renamed_value_constants.get(s, [None])[0] or
+        renamed_value_constants_negative.get(s, [None])[0] or
+        value_constant_literals.get(s, [None])[0] or
+        opaque_constants.get(s, [None])[0] or
+        opaque_constant_literals.get(s, [None])[0] or
+        "UNBEKNOWNST"
+    )
 
 def get_memory_op_type(size: int) -> str:
     if size == 1:                         
@@ -560,7 +662,10 @@ def name_value_constants(vc: dict) -> dict[str, tuple[str, int]]:
     """
     renamed_dict = {}
     for (addr, freq) in vc.items():
-        new_name = f"VAL_CONST_{int(addr, 16)}"
+        if int(addr, 16) >= 0:
+            new_name = f"VAL_CONST_{int(addr, 16)}"
+        else: 
+            new_name = f"VAL_CONST{int(addr, 16)}"
         renamed_dict[addr] = (new_name, freq)
     return renamed_dict
 
@@ -626,12 +731,16 @@ def main():
     #const_map = build_constant_map(project)
     #annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
-    disassembly, disassembly_tokenized = lowlevel_disas(cfg, section_data)
-    with open("test.txt", encoding="utf-8", mode="w") as f:
-        f.write("Function name, function address, assembly") 
-        for (k1, v1), (k2, v2) in zip(disassembly.items(), disassembly_tokenized.items()):
-            f.write(f"{k1}: {v1}\n")    
-            f.write(f"{k2}: {v2}\n")
+    try:
+        disassembly, disassembly_tokenized = lowlevel_disas(cfg, section_data)
+        with open("test.txt", encoding="utf-8", mode="w") as f:
+            f.write("Function name, function address, assembly") 
+            for (k1, v1), (k2, v2) in zip(disassembly.items(), disassembly_tokenized.items()):
+                f.write(f"{k1}: {v1}\n")    
+                f.write(f"{k2}: {v2}\n")
+    except ValueError as e:
+        print(e)
+
 
 
     return
