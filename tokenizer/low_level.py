@@ -235,7 +235,6 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         "0x66": "x86_operand_size_override",
         "0x67": "x86_address-size_override",
     }
-    no_nones = 0
     blocks = set()
     for func_addr, func in cfg.functions.items():
         for block in func.blocks:
@@ -418,14 +417,16 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                 matching[k] = v
             else:
                 non_matching[k] = v
-
+        # 'Matching' means that the hex value was found in global constants / strings in data section
         sorted_matching = dict(
             sorted(matching.items(), key=lambda item: item[1], reverse=True)
         )
         sorted_non_matching = dict(
             sorted(non_matching.items(), key=lambda item: item[1], reverse=True)
         )
-        value_constant_literals = name_value_constant_literals(sorted_matching)
+
+        value_constant_literals = name_value_constant_literals(sorted_matching, "VAL_CONST_LIT")
+
         if len(value_constant_literals) != 0:
             # print("Value Constant Literals")
             for key, value in value_constant_literals.items():
@@ -433,7 +434,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                 pass
 
         opaque_constants, opaque_constant_literals = name_opaque_constants(
-            sorted_non_matching
+            sorted_non_matching, "OP_CONST_LIT_"
         )
         if len(opaque_constants) != 0:
             # print("Opaque Constants")
@@ -496,7 +497,7 @@ def parse_instruction(
     opaque_constant_literals,
     mnemonics,
     symbol_tokens
-) -> list[str]:
+) -> str:
     """
     Tokenizes a single instruction dictionary into prefix, mnemonic, and operand tokens.
 
@@ -641,16 +642,9 @@ def get_memory_op_type(size: int) -> str:
         raise ValueError
 
 
-"""
-    - ValueConstants: 0x00 to 0xFF
-    - ValueConstantLiterals: larger static values (up to 128-bit)
-    - OpaqueConstants: memory references using base registers or unresolved values
-    - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
-"""
-
 
 def name_opaque_constants(
-    occ: dict,
+    occ: dict, base_name: str
 ) -> tuple[dict[str, tuple[str, int]], dict[str, tuple[str, int]]]:
     """
     Takes a dict of all addresses that do not point to a known constant. Assigns the first 16 to OPAQUE_CONSTANTS, the rest to OPAQUE_CONSTANT_LITERALS
@@ -669,13 +663,13 @@ def name_opaque_constants(
             new_name = f"OP_CONST_{counter}"
             opaque_constants[addr] = (new_name, freq)
         else:
-            new_name = register_name_range(counter, "OP_CONST_LIT_")
+            new_name = register_name_range(counter, base_name)
             opaque_constant_literals[addr] = (new_name, freq)
         counter += 1
     return opaque_constants, opaque_constant_literals
 
 
-def name_value_constant_literals(vcl: dict) -> dict[str, tuple[str, int]]:
+def name_value_constant_literals(vcl: dict, base_name: str) -> dict[str, tuple[str, int]]:
     """
     Takes a sorted dict of value constant literals and gives them a descriptive token name: e.g. 0x7c --> x86_VALCONST_124
 
@@ -688,8 +682,12 @@ def name_value_constant_literals(vcl: dict) -> dict[str, tuple[str, int]]:
     renamed_dict = {}
     counter = 0
     for addr, freq in vcl.items():
-        new_name = f"VAL_CONST_LIT_{counter}"
-        renamed_dict[addr] = (new_name, freq)
+        if counter <= 16:
+            new_name = f"VAL_CONST_LIT_{counter}"
+            renamed_dict[addr] = (new_name, freq)
+        else:
+            new_name = register_name_range(counter, base_name)
+            renamed_dict[addr] = (new_name, freq)
         counter += 1
     return renamed_dict
 
