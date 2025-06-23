@@ -220,7 +220,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
     - OpaqueConstants: memory references using base registers or unresolved values
     - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
     """
-    func_disas = {}
+    func_disas: dict[str, str] = {}
     func_disas_token = {}
     inv_prefix_tokens = {
         "0xF0": "x86_lock",
@@ -247,10 +247,14 @@ def lowlevel_disas(cfg, constant_list) -> dict:
 
         # print("\n")
         func_name = cfg.functions[func_addr].name
-        index = func_name
+        index: str = func_name
 
-        temp_bbs: list[dict[str, list]] = []
-        block_dict = {}
+        temp_bbs: list[dict[str, list[str]]] = []
+        temp_tk: list[dict[str, list[str]]] = []
+        disassembly_list: list[str]
+        token_list: list[str]
+
+        block_dict: dict[str, str] = {} # hex value of Block address: block_name
         mnemonics = {}
         symbol_tokens = {}
 
@@ -261,9 +265,9 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         block_counter = 0
         for block in func.blocks:
             block_addr = hex(block.addr)
-            block_dict[block_addr] = register_name_range(
-                block_counter, basename="Block"
-            )
+            block_str = register_name_range(
+                block_counter, basename="Block")
+            block_dict[block_addr] = block_str
             # print(block_dict)
 
             disassembly_list = []
@@ -357,7 +361,6 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                                 else:
                                     value_constant_literals_candidates[hex(disp)] = 1
 
-                            # TODO check what to do with negative offset
                             # TODO Split Literals in the same way as the blocks
 
                 else:
@@ -365,17 +368,12 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                     raise TypeError
                 # print((insn.mnemonic, insn.op_str))
                 # print(f"Operand types: {insn_list}")
-                disassembly_list.append(
-                    [
-                        insn.mnemonic,
-                        insn.op_str,
-                        [
+                disasssembly_stream: list[str] = [
                             inv_prefix_tokens[f"0x{b:02X}"]
                             for b in insn.prefix
                             if b != 0 and f"0x{b:02X}" in inv_prefix_tokens
-                        ],
                     ]
-                )
+                disassembly_list.append([insn.mnemonic, insn.op_str, disasssembly_stream])
                 # print(insn.mnemonic, insn.op_str)
 
                 # Use only the mnemonic itself, without prefixes
@@ -448,17 +446,19 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                 # print(f"{key}, {value}")
                 pass
 
-        temp_tk = []
         # print(temp_bbs)
         for block_code in temp_bbs:
             # print(block_code)
+            token_list = []
             block_addr: str
-            block_instrs: list[str]
+            block_instrs: list[str] 
+            # There is only one item --> traversal like this is fine
             for addr, op_str in block_code.items():
                 block_addr = addr
                 block_instrs = op_str
 
             for code_snippet in block_instrs:
+                token_stream = []
                 # print(type(code_snippet))
                 # mnemonic_token = mnemonics[code_snippet]
                 # print(f"CodeSnippet: {code_snippet}")
@@ -467,25 +467,20 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                 # prefix_names = [inv_prefix_tokens[b] for b in prefix_bytes if b in inv_prefix_tokens]
 
                 # Save tokenized instruction with prefixes passed in
-                try:
-                    token_stream = parse_instruction(
-                        code_snippet,
-                        renamed_value_constants,
-                        renamed_value_constants_negative,
-                        value_constant_literals,
-                        opaque_constants,
-                        opaque_constant_literals,
-                        mnemonics,
-                        symbol_tokens
-                    )
-                except ValueError as e:
-                    print(e)
-                    raise ValueError
+                token_stream = parse_instruction(
+                    code_snippet,
+                    renamed_value_constants,
+                    renamed_value_constants_negative,
+                    value_constant_literals,
+                    opaque_constants,
+                    opaque_constant_literals,
+                    mnemonics,
+                    symbol_tokens
+                )
                 # print(f"TOKEN STREAM: {token_stream}")
-                temp_tk.append({block_dict[block_addr]: token_stream})
-
-        # print(f"Temp bbs: {temp_bbs}")
-        # print(f"Token temp: {temp_tk}")
+                token_list.append(token_stream)
+                #print(token_stream)
+            temp_tk.append({block_addr: token_list})
 
         func_disas[index] = temp_bbs
         func_disas_token[index] = temp_tk
@@ -501,7 +496,7 @@ def parse_instruction(
     opaque_constant_literals,
     mnemonics,
     symbol_tokens
-):
+) -> list[str]:
     """
     Tokenizes a single instruction dictionary into prefix, mnemonic, and operand tokens.
 
@@ -798,7 +793,7 @@ def main():
     cfg = project.analyses.CFGFast(normalize=True)
     disassembly, disassembly_tokenized = lowlevel_disas(cfg, section_data)
     with open("test.txt", encoding="utf-8", mode="w") as f:
-        f.write("Function name, function address, assembly\n")
+        f.write("Function name, assembly\n")
         for (k1, v1), (k2, v2) in zip(
             disassembly.items(), disassembly_tokenized.items()
         ):
