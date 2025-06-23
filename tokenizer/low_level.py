@@ -263,6 +263,8 @@ def lowlevel_disas(cfg, constant_list) -> dict:
 
         block_counter = 0
         for block in func.blocks:
+            if block.capstone.insns is None:
+                print("KAPUTT")
             block_addr = hex(block.addr)
             block_str = register_name_range(
                 block_counter, basename="Block")
@@ -425,7 +427,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             sorted(non_matching.items(), key=lambda item: item[1], reverse=True)
         )
 
-        value_constant_literals = name_value_constant_literals(sorted_matching, "VAL_CONST_LIT")
+        value_constant_literals = name_value_constant_literals(sorted_matching, "VAL_CONST_LIT_")
 
         if len(value_constant_literals) != 0:
             # print("Value Constant Literals")
@@ -454,12 +456,12 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             block_addr: str
             block_instrs: list[str] 
             # There is only one item --> traversal like this is fine
-            for addr, op_str in block_code.items():
+            for addr, op_str in block_code.items(): # dict[str, list[str]]
                 block_addr = addr
                 block_instrs = op_str
 
             for code_snippet in block_instrs:
-                token_stream = []
+                token_stream: str = ""
                 # print(type(code_snippet))
                 # mnemonic_token = mnemonics[code_snippet]
                 # print(f"CodeSnippet: {code_snippet}")
