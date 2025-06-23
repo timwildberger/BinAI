@@ -483,7 +483,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                 # print(f"TOKEN STREAM: {token_stream}")
                 token_list.append(token_stream)
                 #print(token_stream)
-            temp_tk.append({block_addr: token_list})
+            temp_tk.append({block_dict[block_addr]: token_list})
 
         func_disas[index] = temp_bbs
         func_disas_token[index] = temp_tk
