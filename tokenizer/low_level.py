@@ -142,21 +142,6 @@ def extract_ldis_blocks_from_file(file_path):
     return result
 
 
-def get_loaded_memory_ranges(proj):
-    """
-    Returns a list of tuples (start_addr, end_addr) for each loaded section.
-    """
-    ranges = []
-    for section in proj.loader.main_object.sections:
-        # if section.is_loaded:
-        #    start = section.vaddr
-        #    end = start + section.memsize
-        #    ranges.append((start, end))
-        pass
-    return ranges
-
-
-
 def register_name_range(id: int, basename) -> str:
     """
     Creates tokens for blocks.
@@ -169,17 +154,14 @@ def register_name_range(id: int, basename) -> str:
     Block number < 255: Block00 -  BlockFF
     Block number > 255: BlockLitStart BlockLit{HEX VALUE} BlockLit{HEX VALUE} BlockLitEnd"""
     if id < 255:
-        name = f"{basename}{str(hex(id)[2:]).upper()}"
+        name = f"{basename}_{str(hex(id)[2:]).upper()}"
     else:
-        binary_list = list(bin(id)[2:])
         id_str = hex(id)[2:].upper()
         chunks = [id_str[i: i+2] for i in range(0, len(id_str), 2)]
-        print(chunks)
-        name = f"{basename}Start"
+        name = f"{basename}_Start"
         for element in chunks:
-            name += f" {basename}Lit{element}"
-        name += f" {basename}End"
-        print(name)
+            name += f" {basename}_{element}"
+        name += f" {basename}_End"
     return name
 
 
@@ -201,6 +183,12 @@ def lowlevel_disas(cfg, constant_list) -> dict:
     - ValueConstantLiterals: larger static values (up to 128-bit)
     - OpaqueConstants: memory references using base registers or unresolved values
     - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
+
+
+    Immediate: hex value can be value or hex address
+    Memory: hex value MUST be an 
+
+
     """
     func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = {} # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
     func_disas: dict[str, str] = {}
@@ -218,25 +206,39 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         "0x66": "x86_operand_size_override",
         "0x67": "x86_address-size_override",
     }
-    blocks = set()
-    for func_addr, func in cfg.functions.items():
-        func_min_addr: int = int(func_addr)
-        func_max_addr: int = 0
-        block_list = []
-        counter = 0
-        for block in func.blocks:
-            func_max_addr = max(func_min_addr, block.addr + block.size)
-            block_list.append({register_name_range(counter, basename="Block") : (hex(func_min_addr), hex(func_max_addr))})
-            blocks.add(hex(block.addr))
-            counter += 1
-        block_list = sorted(block_list, key=lambda d: list(d.values())[0][0])
-        func_addr_range[func_addr] = block_list
 
+    arithmetic_instructions = {
+    "add", "sub", "mul", "imul", "div", "idiv", "inc", "dec", "and", "or", "xor", "not", "neg",
+        "shl", "shr", "sar", "sal", "rol", "ror", "cmp", "test", "adc", "sbb", "lea"
+    }
+
+    addressing_control_flow_instructions = {
+        "jmp", "call", "je", "jz", "jne", "jnz", "jg", "jnle", "jge", "jnl", "jl", "jnge", "jle",
+        "jng", "ja", "jnbe", "jae", "jnb", "jb", "jnae", "jbe", "jna", "loop", "loope", "loopne",
+        "mov", "lea", "push", "pop", "cmp", "test", "int"
+    }
+
+    # Get .text section size
+    project = angr.Project("src/curl/x86-clang-3.5-O0_curl", auto_load_libs=False)
+    obj = project.loader.main_object
+    text_start: int = 0
+    text_end: int = 0
+    for section in obj.sections:
+        if section.name == ".text":
+            text_start = section.vaddr         # virtuelle Startadresse
+            text_size = section.memsize        # Größe in Bytes
+            text_end = text_start + text_size
+
+    blocks = set()
 
 
     for func_addr, func in cfg.functions.items():
         # print("\n"))
         func_name = cfg.functions[func_addr].name
+
+        func_min_addr: int = int(func_addr)
+        func_max_addr: int = 0
+        block_list = []
 
         if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
             continue
@@ -254,8 +256,15 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         value_constants_negative: dict[str, int] = {}
         value_constant_literals_candidates: dict[str, int] = {}
 
+        opaque_candidates: dict[str, int] = {}
+
         block_counter = 0
         for block in func.blocks:
+
+            func_max_addr = max(func_min_addr, block.addr + block.size)
+            block_list.append({register_name_range(block_counter, basename="Block") : (hex(func_min_addr), hex(func_max_addr))})
+            blocks.add(hex(block.addr))
+
             if block.capstone.insns is None:
                 print("KAPUTT")
             block_addr = hex(block.addr)
@@ -283,9 +292,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                 # print(f"Original capstone object: {insn.insn}")
                 # print(f"Original prefix: {insn.insn.prefix}")
                 # print((insn.prefix))
-                if insn.prefix != [0, 0, 0, 0]:
-                    # print("SOMETHINGS UP HERE!s")
-                    pass
+ 
                 insn_list = []
 
                 if hasattr(insn, "operands"):
@@ -294,15 +301,11 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                     for op in insn.operands:
                         insn_list.append(op.type)
                         if op.type == 0 or op.type > 3:
-                            # print("WHAAAAAAAAAAAAAAAAAAAAAT")
                             raise Exception
                         if op.type == 1:  # REGISTER
-                            # print(f"REGISTER: {insn.reg_name(op.reg)}")
-                            # print(f"\t{insn.mnemonic, insn.op_str}")
                             symbol_tokens[insn.reg_name(op.reg)] = mnemonic_to_token(
                                 insn.reg_name(op.reg)
                             )
-                            pass
                         elif op.type == 2:  # IMMEDIATE
                             imm_val = op.imm
 
@@ -320,46 +323,65 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                                 0x100 <= imm_val <= (2**128 - 1)
                                 or (-(2**127)) <= imm_val <= -0x100
                             ):
-                                if hex(imm_val) in value_constant_literals_candidates:
-                                    value_constant_literals_candidates[
-                                        hex(imm_val)
-                                    ] += 1
+                                print(insn.mnemonic)
+                                # Large immediate value, potentially address or large constant
+                                if hex(imm_val) in constant_list:
+                                    # Known constant address
+                                    value_constant_literals_candidates[hex(imm_val)] = value_constant_literals_candidates.get(hex(imm_val), 0) + 1
+                                elif text_start <= imm_val < text_end:
+                                    print("TEEEXT")
+                                    # Immediate falls inside .text range
+                                    if insn.mnemonic in arithmetic_instructions:
+                                        print("LELELELE")
+                                        # Treat as value because arithmetic instructions usually use immediates as values
+                                        value_constant_literals_candidates[hex(imm_val)] = value_constant_literals_candidates.get(hex(imm_val), 0) + 1
+                                    elif insn.mnemonic in addressing_control_flow_instructions:
+                                        print("JAJAJAJA")
+                                        # Treat as address because these instructions usually use immediates as addresses
+                                        opaque_candidates[hex(imm_val)] = opaque_candidates.get(hex(imm_val), 0) + 1
+                                    else:
+                                        print("NONONONO")
+                                        # Conservative fallback: treat as opaque candidate
+                                        opaque_candidates[hex(imm_val)] = opaque_candidates.get(hex(imm_val), 0) + 1
                                 else:
-                                    value_constant_literals_candidates[hex(imm_val)] = 1
+                                    # Otherwise treat as large immediate literal value
+                                    value_constant_literals_candidates[hex(imm_val)] = value_constant_literals_candidates.get(hex(imm_val), 0) + 1
                             else:
-                                print(
-                                    f"imm_val: {imm_val}, insn: {insn.mnemonic} {insn.op_str}, prefixes: {[inv_prefix_tokens[f"0x{b:02X}"] for b in insn.prefix if b != 0 and f"0x{b:02X}" in inv_prefix_tokens]}"
-                                )
+                                print(f"Unexpected immediate value: {imm_val} at instruction {insn.mnemonic}")
                                 raise ValueError
                         elif op.type == 3:  # MEMORY
                             disp = op.mem.disp
                             disp = abs(disp)
                             if 0x00 <= disp <= 0xFF:
+                                print("JAAA")
                                 if hex(disp) in value_constants:
                                     value_constants[hex(disp)] += 1
                                 else:
                                     value_constants[hex(disp)] = 1
                             elif -0x80 <= disp <= -0x01:
+                                print("NOOOO")
                                 if hex(disp) in value_constants_negative:
                                     value_constants_negative[hex(disp)] += 1
                                 else:
                                     value_constants[hex(disp)] = 1
                                 raise ValueError
-                            elif (
-                                0x100 <= disp <= (2**128 - 1)
-                                or (-(2**127)) <= disp <= -0x100
-                            ):
-                                if hex(disp) in value_constant_literals_candidates:
-                                    value_constant_literals_candidates[hex(disp)] += 1
+                            else:
+                                # For larger displacements, check if pointing to known constant or code or opaque
+                                if hex(disp) in constant_list:
+                                    value_constant_literals_candidates[hex(disp)] = value_constant_literals_candidates.get(hex(disp), 0) + 1
+                                elif text_start <= disp < text_end:
+                                    opaque_candidates[hex(disp)] = opaque_candidates.get(hex(disp), 0) + 1
+                                elif disp < func_min_addr or disp > func_max_addr:
+                                    opaque_candidates[hex(disp)] = opaque_candidates.get(hex(disp), 0) + 1
                                 else:
-                                    value_constant_literals_candidates[hex(disp)] = 1
+                                    value_constant_literals_candidates[hex(disp)] = value_constant_literals_candidates.get(hex(disp), 0) + 1
 
 
                 else:
                     print(f"INSTRUCTION WITHOUT OEPRANDS: {insn}")
                     raise TypeError
-                # print((insn.mnemonic, insn.op_str))
-                # print(f"Operand types: {insn_list}")
+                print((insn.mnemonic, insn.op_str))
+                print(f"Operand types: {insn_list}\n")
                 disasssembly_stream: list[str] = [
                             inv_prefix_tokens[f"0x{b:02X}"]
                             for b in insn.prefix
@@ -378,17 +400,22 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             temp_bbs.append({block_addr: disassembly_list})
             # print(temp_bbs)
             block_counter += 1
+        print(f"Funktion finished: {func_name}")
 
+        block_list = sorted(block_list, key=lambda d: list(d.values())[0][0])
+        func_addr_range[func_addr] = block_list
+        #print(opaque_candidates)
         # handle the constants dict
         # VALUE CONSTANTS 0x00 bis 0xFF
         # sorted_value_constants = dict(sorted(value_constants.items(), key=lambda item: item[1], reverse=True))
-        renamed_value_constants = name_value_constants(value_constants)
-        renamed_value_constants_negative = name_value_constants(
+        renamed_value_constants: dict[str, tuple[str, int]] = name_value_constants(value_constants)
+        renamed_value_constants_negative: dict[str, tuple[str, int]] = name_value_constants(
             value_constants_negative
         )
 
         # Take all candidates for value constant literals and check which of those are known constants
         # First, sort the items once
+
         sorted_items = sorted(
             value_constant_literals_candidates.items(),
             key=lambda item: item[1],
@@ -398,14 +425,23 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         # Then, iterate once and split into matching and non-matching
         matching = {}
         non_matching = {}
+
         for k, v in sorted_items:
-            if k in constant_list:
+            if k in constant_list:  # does this address refer to a known constant?
                 matching[k] = v
-            elif k in blocks:
-                matching[k] = v
+            elif text_start <= int(k, 16) < text_end:  # does this address point to somewhere inside the .text section?
+                matching[k] = v  # --> it must point to code then
             else:
                 non_matching[k] = v
-        # 'Matching' means that the hex value was found in global constants / strings in data section
+
+        # Now, include all opaque_candidates that are NOT already in non_matching or matching
+        for k, v in opaque_candidates.items():
+            if k not in matching and k not in non_matching:
+                non_matching[k] = v
+            elif k in non_matching:
+                non_matching[k] += v  # accumulate counts if already present
+
+        # Sort both matching and non_matching again by frequency descending
         sorted_matching = dict(
             sorted(matching.items(), key=lambda item: item[1], reverse=True)
         )
@@ -413,11 +449,16 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             sorted(non_matching.items(), key=lambda item: item[1], reverse=True)
         )
 
-        value_constant_literals = name_value_constant_literals(sorted_matching, "VALUED_CONST_LIT_")
+        # Name the constants
+        value_constant_literals = name_value_constant_literals(sorted_matching, "VALUED_CONST_LIT")
 
         opaque_constants, opaque_constant_literals = name_opaque_constants(
-            sorted_non_matching, "OPAQUE_CONST_LIT_"
+            sorted_non_matching, "OPAQUE_CONST_LIT"
         )
+
+        print(f"OPAQUE CANDIDATES: {opaque_candidates}")
+        print(f"VALUED CONSTANT LITERALS: {value_constant_literals}\nOPAQUE CONSTANTS & OPAQUE CONSTANT LITERALS: {opaque_constants}, {opaque_constant_literals}")
+
 
         # print(temp_bbs)
         function_addr_range: list[dict[str, tuple[str, str]]] = func_addr_range[func_addr]
@@ -460,6 +501,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
 
         func_disas[func_name] = temp_bbs
         func_disas_token[func_name] = temp_tk
+        break
     return (func_disas, func_disas_token)
 
 
@@ -589,11 +631,24 @@ def resolve_constant(
     opaque_constants,
     opaque_constant_literals,
     func_addr_range: list[dict[int, tuple[str, str]]]
-
 ):
+    """
+    Returns the tokenrepresentation depending on the data type.
+    
+    Args:
+        s (str): The element of the disassembly stream that is to be converted to a token
+        renamed_value_constants (dict[str, tuple[str, int]]): Dict with all positive value constant tokens
+        renamed_value_constants_negative (dict[str, tuple[str, int]]): Dict with all negative value constant tokens
+        value_constant_literals (dict[str, int]): Dict with all valued constant literals tokens
+        opaque_constants (dict[str, int]): Dict with all opaque constants tokens
+        opaque_constant_literals (dict[str, int]): Dict with all opaque constant literals tokens
+
+    Returns:
+        token (str)
+    """
     for element in func_addr_range:
         for block_nr, bounds in element.items():
-            if int(s, 16) in range(int(bounds[0], 16), int(bounds[1], 16)):
+            if int(bounds[0], 16) <= int(s, 16) < int(bounds[1], 16):
                 return block_nr
     return (
         renamed_value_constants.get(s, [None])[0]
@@ -624,8 +679,7 @@ def get_memory_op_type(size: int) -> str:
         return "tmmword ptr"
     else:
         raise ValueError
-
-
+    
 
 def name_opaque_constants(
     occ: dict, base_name: str
@@ -644,7 +698,7 @@ def name_opaque_constants(
     opaque_constant_literals = {}
     for addr, freq in occ.items():
         if counter < 16:
-            new_name = f"OP_CONST_{hex(counter)[2:].upper()}"
+            new_name = f"OPAQUE_CONST_{hex(counter)[2:].upper()}"
             opaque_constants[addr] = (new_name, freq)
         else:
             new_name = register_name_range(counter, base_name)
@@ -666,7 +720,7 @@ def name_value_constant_literals(vcl: dict, base_name: str) -> dict[str, tuple[s
     renamed_dict = {}
     counter = 0
     for addr, freq in vcl.items():
-        if counter <= 16:
+        if counter <= 255:
             new_name = f"VAL_CONST_LIT_{hex(counter)[2:].upper()}"
             renamed_dict[addr] = (new_name, freq)
         else:
@@ -689,7 +743,7 @@ def name_value_constants(vc: dict) -> dict[str, tuple[str, int]]:
     renamed_dict = {}
     for addr, freq in vc.items():
         #print(f"INTEGER: {int(addr, 16)}, HEX: {addr[2:]}")
-        new_name = f"VAL_CONST_{addr[2:].upper()}"
+        new_name = f"VALUED_CONST_{addr[2:].upper()}"
         renamed_dict[addr] = (new_name, freq)
     return renamed_dict
 
@@ -842,8 +896,6 @@ if __name__ == "__main__":
     main()
 
 
-# TODO Neuer Token "BLOCK" für Calls innerhalb der Funktion
-# TODO Kodierung von Literals auf hex anstatt auf Binary
 
 # TODO Datei mit Pointer : type, Value - register which call addressess point to what datum
 
