@@ -189,7 +189,15 @@ def lowlevel_disas(cfg, constant_list) -> dict:
     Memory: hex value MUST be an 
 
 
+    Opaque Const Metadaten:
+    0: {type: Local function, name: fibonacci}  
+    1: {type: String, value: "Hello World I love u"}
+    2: {type: Library function, name: read_file, library: libc}
+    3: {type: Library function, name: close_file, library: libc}
     """
+
+    opaque_const_meta: dict[int, list[str]] = {}
+
     func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = {} # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
     func_disas: dict[str, str] = {}
     func_disas_token = {}
@@ -323,45 +331,57 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                                 0x100 <= imm_val <= (2**128 - 1)
                                 or (-(2**127)) <= imm_val <= -0x100
                             ):
-                                print(insn.mnemonic)
-                                # Large immediate value, potentially address or large constant
-                                if hex(imm_val) in constant_list:
-                                    print(f"JEEET")
-                                    # Known constant address
-                                    value_constant_literals_candidates[hex(imm_val)] = value_constant_literals_candidates.get(hex(imm_val), 0) + 1
-                                elif text_start <= imm_val < text_end:
-                                    print("TEEEXT")
-                                    # Immediate falls inside .text range
-                                    if insn.mnemonic in arithmetic_instructions:
-                                        print("LELELELE")
-                                        # Treat as value because arithmetic instructions usually use immediates as values
-                                        value_constant_literals_candidates[hex(imm_val)] = value_constant_literals_candidates.get(hex(imm_val), 0) + 1
-                                    elif insn.mnemonic in addressing_control_flow_instructions:
-                                        print("JAJAJAJA")
-                                        # Treat as address because these instructions usually use immediates as addresses
-                                        opaque_candidates[hex(imm_val)] = opaque_candidates.get(hex(imm_val), 0) + 1
+                                if hex(imm_val) in constant_list.keys(): # is it a constant
+                                    print("ITS A CONSTANT")
+                                    if hex(imm_val) in value_constant_literals_candidates:
+                                        value_constant_literals_candidates[hex(imm_val)] += 1
                                     else:
-                                        print("NONONONO")
-                                        # Conservative fallback: treat as opaque candidate
-                                        opaque_candidates[hex(imm_val)] = opaque_candidates.get(hex(imm_val), 0) + 1
+                                        value_constant_literals_candidates[hex(imm_val)] = 1
+
+                                elif text_start <= imm_val <= text_end:
+                                    print("ITS IN TEXT")
+                                    if insn.mnemonic in arithmetic_instructions:
+                                        print("\tITS ARITHMETIC")
+                                        if hex(imm_val) in value_constant_literals_candidates:
+                                            value_constant_literals_candidates[hex(imm_val)] += 1
+                                        else:
+                                            value_constant_literals_candidates[hex(imm_val)] = 1
+                                    elif insn.mnemonic in addressing_control_flow_instructions:
+                                        print("\tITS CONTROL FLOW")
+                                        if func_min_addr <= (imm_val) < func_max_addr:
+                                            print("\t\tITS LOCAL")
+                                            if hex(imm_val) in value_constant_literals_candidates:
+                                                value_constant_literals_candidates[hex(imm_val)] += 1
+                                            else:
+                                                value_constant_literals_candidates[hex(imm_val)] = 1
+                                        else:
+                                            print("\t\tITS NON LOCAL")
+                                            if hex(imm_val) in opaque_candidates:
+                                                opaque_candidates[hex(imm_val)] += 1
+                                            else:
+                                                opaque_candidates[hex(imm_val)] = 1
+                                    else:
+                                        print("ITS SOMETHING ELSE")
+                                        if hex(imm_val) in opaque_candidates:
+                                            opaque_candidates[hex(imm_val)] += 1
+                                        else:
+                                            opaque_candidates[hex(imm_val)] = 1
                                 else:
-                                    # Otherwise treat as large immediate literal value
-                                    print(f"FAAF")
-                                    value_constant_literals_candidates[hex(imm_val)] = value_constant_literals_candidates.get(hex(imm_val), 0) + 1
-                            else:
-                                print(f"Unexpected immediate value: {imm_val} at instruction {insn.mnemonic}")
-                                raise ValueError
+                                    print(f"ITS REALLY SOMETHING ELSE")
+                                    if hex(imm_val) in opaque_candidates:
+                                        opaque_candidates[hex(imm_val)] += 1
+                                    else:
+                                        opaque_candidates[hex(imm_val)] = 1
+
                         elif op.type == 3:  # MEMORY
                             disp = op.mem.disp
                             disp = abs(disp)
                             if 0x00 <= disp <= 0xFF:
-                                print("JAAA")
                                 if hex(disp) in value_constants:
                                     value_constants[hex(disp)] += 1
                                 else:
                                     value_constants[hex(disp)] = 1
                             elif -0x80 <= disp <= -0x01:
-                                print("NOOOO")
                                 if hex(disp) in value_constants_negative:
                                     value_constants_negative[hex(disp)] += 1
                                 else:
@@ -370,10 +390,13 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                             else:
                                 # For larger displacements, check if pointing to known constant or code or opaque
                                 if hex(disp) in constant_list:
+                                    print(f"ITS A CONSTANT")
                                     value_constant_literals_candidates[hex(disp)] = value_constant_literals_candidates.get(hex(disp), 0) + 1
                                 elif text_start <= disp < text_end:
+                                    print(f"ITS IN THE TEXT")
                                     opaque_candidates[hex(disp)] = opaque_candidates.get(hex(disp), 0) + 1
                                 elif disp < func_min_addr or disp > func_max_addr:
+                                    print("ITS")
                                     opaque_candidates[hex(disp)] = opaque_candidates.get(hex(disp), 0) + 1
                                 else:
                                     value_constant_literals_candidates[hex(disp)] = value_constant_literals_candidates.get(hex(disp), 0) + 1
@@ -418,12 +441,6 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         # Take all candidates for value constant literals and check which of those are known constants
         # First, sort the items once
 
-        sorted_items = sorted(
-            value_constant_literals_candidates.items(),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-
         # Then, iterate once and split into matching and non-matching
         # Only use classification we already did earlier during parsing
         sorted_value_constant_literals = dict(
@@ -433,12 +450,25 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             sorted(opaque_candidates.items(), key=lambda item: item[1], reverse=True)
         )
 
+
         # Name the constants
         value_constant_literals = name_value_constant_literals(sorted_value_constant_literals, "VALUED_CONST_LIT")
 
         opaque_constants, opaque_constant_literals = name_opaque_constants(
             sorted_opaque_candidates, "OPAQUE_CONST_LIT"
         )
+        with open("lalala.txt", "w", encoding="utf-8") as f:
+            for element in opaque_constants.keys():
+                try:
+                    f.write(constant_list[element])
+                except:
+                    pass
+            for element in opaque_constant_literals.keys():
+                try:
+                    f.write(constant_list[element])
+                except:
+                    pass
+
 
         print(f"OPAQUE CANDIDATES: {opaque_candidates}")
         print(f"VALUED CONSTANT LITERALS: {value_constant_literals}\nOPAQUE CONSTANTS & OPAQUE CONSTANT LITERALS: {opaque_constants}, {opaque_constant_literals}")
@@ -705,7 +735,7 @@ def name_value_constant_literals(vcl: dict, base_name: str) -> dict[str, tuple[s
     counter = 0
     for addr, freq in vcl.items():
         if counter <= 255:
-            new_name = f"VAL_CONST_LIT_{hex(counter)[2:].upper()}"
+            new_name = f"VALUED_CONST_LIT_{hex(counter)[2:].upper()}"
             renamed_dict[addr] = (new_name, freq)
         else:
             new_name = register_name_range(counter, base_name)
@@ -733,77 +763,208 @@ def name_value_constants(vc: dict) -> dict[str, tuple[str, int]]:
 
 
 def parse_and_save_data_sections(proj, output_txt="parsed_data.txt"):
-    sections_to_parse = [".rodata", ".data", ".data.rel.ro"]
+    # Erweiterte Liste der Sektionen
+    sections_to_parse = [".rodata", ".data"]
     all_entries = []
     addr_dict = {}
 
     def parse_rodata(data, base_addr):
         entries = []
-        # ASCII strings ≥4 chars + null terminator
         for match in re.finditer(b"[\x20-\x7e]{4,}\x00", data):
             s = match.group().rstrip(b"\x00").decode("utf-8", errors="ignore")
-            addr = base_addr + match.start()
-            entries.append(
-                {
-                    "section": ".rodata",
-                    "start": hex(addr),
-                    "end": hex(addr + len(s) + 1),
-                    "value": f'"{s}"',
-                }
-            )
+            start = base_addr + match.start()
+            entries.append({
+                "section": ".rodata",
+                "start": hex(start),
+                "end": hex(start + len(s) + 1),
+                "value": f'"{s}"'
+            })
         return entries
 
-    def parse_data(data, base_addr, word_size=4, section_name=""):
+    def parse_data(data, base_addr, word_size, section_name):
         entries = []
         for i in range(0, len(data), word_size):
-            chunk = data[i : i + word_size]
-            if len(chunk) < word_size:
+            chunk = data[i:i + word_size]
+            if len(chunk) != word_size:
                 continue
             val = int.from_bytes(chunk, byteorder="little")
-            entries.append(
-                {
-                    "section": section_name,
-                    "start": hex(base_addr + i),
-                    "end": hex(base_addr + i + word_size),
-                    "value": hex(val),
-                }
-            )
+            start = base_addr + i
+            entries.append({
+                "section": section_name,
+                "start": hex(start),
+                "end": hex(start + word_size),
+                "value": hex(val)
+            })
         return entries
 
+    def parse_plt(data, base_addr):
+        entries = []
+        stub_size = proj.arch.bytes  # üblicherweise 8 Byte auf x86_64
+        for i in range(0, len(data), stub_size):
+            addr = base_addr + i
+            entries.append({
+                "section": ".plt",
+                "start": hex(addr),
+                "end": hex(addr + stub_size),
+                "value": f"plt_stub_{hex(addr)}"
+            })
+        return entries
+
+    # 1) Sektionen aus sections_to_parse parsen
     for sec in proj.loader.main_object.sections:
         if sec.name not in sections_to_parse:
             continue
-        start = sec.vaddr
-        size = sec.memsize
-        data = proj.loader.memory.load(start, size)
 
-        if sec.name == ".rodata":
-            entries = parse_rodata(data, start)
-        elif sec.name in [".data", ".data.rel.ro"]:
-            entries = parse_data(data, start, 4, sec.name)
-        else:
+        # bss ist meist uninitialized, enthält keine Daten im File, sondern nur Größe
+        if sec.name == ".bss":
+            # Erstelle fiktive Einträge mit None oder 0 als Wert
+            start = sec.vaddr
+            size = sec.memsize
+            word_size = proj.arch.bytes
             entries = []
+            for addr in range(start, start + size, word_size):
+                entries.append({
+                    "section": ".bss",
+                    "start": hex(addr),
+                    "end": hex(addr + word_size),
+                    "value": "uninitialized"
+                })
+        else:
+            data = proj.loader.memory.load(sec.vaddr, sec.memsize)
+            if sec.name == ".rodata":
+                entries = parse_rodata(data, sec.vaddr)
+            elif sec.name == ".plt":
+                entries = parse_plt(data, sec.vaddr)
+            elif sec.name in (".data", ".data.rel.ro", ".plt.got"):
+                entries = parse_data(data, sec.vaddr, word_size=proj.arch.bytes, section_name=sec.name)
+            else:
+                entries = []
 
         all_entries.extend(entries)
         for e in entries:
             addr_dict[e["start"]] = [e["end"], e["section"], e["value"]]
 
+    # 2) Symbole aus .symtab und .dynsym hinzufügen (sofern vorhanden)
+    obj = proj.loader.main_object
+    sym_tables = []
+    if hasattr(obj, "symbols") and obj.symbols:
+        sym_tables.append(obj.symbols)
+    if hasattr(obj, "dynamic_symbols") and obj.dynamic_symbols:
+        sym_tables.append(obj.dynamic_symbols)
+
+    for symtab in sym_tables:
+        for sym in symtab:
+            if not (getattr(sym, "is_function", False) or getattr(sym, "is_object", False)):
+                continue
+            if sym.rebased_addr is None or sym.rebased_addr == 0:
+                continue
+            addr = hex(sym.rebased_addr)
+            # Wenn Adresse schon existiert, ergänze den Namen, sonst neuen Eintrag
+            if addr in addr_dict:
+                # Namen ergänzen, wenn noch nicht gesetzt oder Default-Wert
+                if addr_dict[addr][2] is None or addr_dict[addr][2].startswith("plt_stub_") or addr_dict[addr][2] == "uninitialized":
+                    addr_dict[addr][2] = sym.name
+            else:
+                addr_dict[addr] = [addr, ".symtab/dynsym", sym.name]
+
+    # 3) PLT-Symbole aus Imports mit Namen anreichern (optional, falls noch nicht vorhanden)
+    for sym in obj.symbols:
+        if sym.is_import and sym.name and sym.rebased_addr is not None and sym.rebased_addr != 0:
+            addr = hex(sym.rebased_addr)
+            if addr in addr_dict:
+                if addr_dict[addr][2] is None or addr_dict[addr][2].startswith("plt_stub_"):
+                    addr_dict[addr][2] = sym.name
+            else:
+                addr_dict[addr] = [addr, ".plt", sym.name]
+
+    # Ausgabe in Datei
     with open(output_txt, "w") as f:
         for e in all_entries:
-            f.write(f"{e['section']}, {e['start']} - {e['end']}: {e['value']}\n")
+            f.write(f'{e["section"]}, {e["start"]} - {e["end"]}: {e["value"]}\n')
+        f.write("\n# PLT / Symtab / Dynsym Symbole mit Namen\n")
+        for addr, info in sorted(addr_dict.items(), key=lambda x: int(x[0], 16)):
+            section = info[1]
+            value = info[2]
+            if value and not value.startswith("plt_stub_"):
+                f.write(f"{section}, {addr}: {value}\n")
 
-    print(
-        f"Parsed {len(all_entries)} entries from sections {sections_to_parse} and saved to {output_txt}"
-    )
+    print(f"Parsed {len(all_entries)} section entries + Symbols into {output_txt}")
     return addr_dict
+
+
+def parse_init_sections(proj, output_txt="parsed_init_sections.txt", sections_to_parse=None):
+    """
+    Parse ELF .init/.fini/.init_array/.fini_array sections and write to file.
+
+    Args:
+        proj (angr.Project): Loaded angr project.
+        output_txt (str): Output file to write parsed content.
+        sections_to_parse (list[str], optional): Section names to parse. Defaults to init/fini types.
+
+    Returns:
+        list[dict]: List of parsed section entries.
+    """
+    if sections_to_parse is None:
+        sections_to_parse = [".init", ".fini", ".init_array", ".fini_array"]
+
+    entries = []
+
+    with open(output_txt, "w") as f:
+        f.write("# Parsed init/fini related sections\n")
+
+        for section in proj.loader.main_object.sections:
+            if section.name not in sections_to_parse:
+                continue
+
+            try:
+                data = proj.loader.memory.load(section.vaddr, section.memsize)
+            except Exception as e:
+                print(f"Warning: could not read section {section.name}: {e}")
+                continue
+
+            if section.name.endswith("_array"):
+                word_size = proj.arch.bytes
+                for i in range(0, len(data), word_size):
+                    chunk = data[i:i + word_size]
+                    if len(chunk) != word_size:
+                        continue
+                    val = int.from_bytes(chunk, byteorder="little")
+                    entry = {
+                        "section": section.name,
+                        "start": hex(section.vaddr + i),
+                        "end": hex(section.vaddr + i + word_size),
+                        "value": hex(val),
+                        "type": "pointer"
+                    }
+                    entries.append(entry)
+                    f.write(f"{entry['section']}, {entry['start']} - {entry['end']}: {entry['value']} (ptr)\n")
+            else:
+                hex_preview = data[:32].hex()
+                entry = {
+                    "section": section.name,
+                    "start": hex(section.vaddr),
+                    "end": hex(section.vaddr + section.memsize),
+                    "value": f"hex({hex_preview}...)",
+                    "type": "code"
+                }
+                entries.append(entry)
+                f.write(f"{entry['section']}, {entry['start']} - {entry['end']}: {entry['value']} (code)\n")
+
+    print(f"Parsed {len(entries)} entries from init-related sections into {output_txt}")
+    return entries
 
 
 def main():
     file_path = "src/clamav/x86-gcc-9-O3_clambc"
+    from elftools.elf.elffile import ELFFile
+    with open("src/curl/x86-clang-3.5-O0_curl", "rb") as how
     # print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
 
     project = angr.Project("src/curl/x86-clang-3.5-O0_curl", auto_load_libs=False)
     section_data = parse_and_save_data_sections(project)
+    init_section_data = parse_init_sections(project)
+    #print(section_data)
+    
     # print(section_data)
 
     # const_map = build_constant_map(project)
