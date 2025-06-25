@@ -177,12 +177,6 @@ def get_loaded_memory_ranges(proj):
     return ranges
 
 
-def is_address(addr, addr_ranges):
-    for start, end in addr_ranges:
-        if start <= addr < end:
-            return True
-    return False
-
 
 def register_name_range(id: int, basename) -> str:
     """
@@ -194,10 +188,10 @@ def register_name_range(id: int, basename) -> str:
         name = f"{basename}{str(hex(id)[2:]).upper()}"
     else:
         binary_list = list(bin(id)[2:])
-        name = f"{basename}LitStart"
+        name = f"{basename}Start"
         for element in binary_list:
             name += f" {basename}Lit{element}"
-        name += f" {basename}LitEnd"
+        name += f" {basename}End"
     return name
 
 
@@ -220,7 +214,9 @@ def lowlevel_disas(cfg, constant_list) -> dict:
     - OpaqueConstants: memory references using base registers or unresolved values
     - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
     """
+    func_addr_range: dict[int, list[dict[int, tuple[str, str]]]] = {} # (func_addr, func_name): [{block_nr: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
     func_disas: dict[str, str] = {}
+    # TODO Function name / address in 
     func_disas_token = {}
     inv_prefix_tokens = {
         "0xF0": "x86_lock",
@@ -237,16 +233,30 @@ def lowlevel_disas(cfg, constant_list) -> dict:
     }
     blocks = set()
     for func_addr, func in cfg.functions.items():
+        func_min_addr: int = int(func_addr)
+        func_max_addr: int = 0
+        block_list = []
+        counter = 0
         for block in func.blocks:
+            func_max_addr = max(func_min_addr, block.addr + block.size)
+            block_list.append({counter : (hex(func_min_addr), hex(func_max_addr))})
             blocks.add(hex(block.addr))
+            counter += 1
+        block_list = sorted(block_list, key=lambda d: list(d.values())[0][0])
+        func_addr_range[func_addr] = block_list
+
+
+    # func_addr_range = sorted(func_addr_range, key=lambda d: list(d.keys())[0][0])
+    for key, value in func_addr_range.items():
+        print(f"{key}: {value}")
+
 
     for func_addr, func in cfg.functions.items():
-        if func.name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
-            continue
-
-        # print("\n")
+        # print("\n"))
         func_name = cfg.functions[func_addr].name
-        index: str = func_name
+
+        if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
+            continue
 
         temp_bbs: list[dict[str, list[str]]] = []
         temp_tk: list[dict[str, list[str]]] = []
@@ -309,7 +319,6 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                             symbol_tokens[insn.reg_name(op.reg)] = mnemonic_to_token(
                                 insn.reg_name(op.reg)
                             )
-                            # TODO add to tokenizer
                             pass
                         elif op.type == 2:  # IMMEDIATE
                             imm_val = op.imm
@@ -362,7 +371,6 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                                 else:
                                     value_constant_literals_candidates[hex(disp)] = 1
 
-                            # TODO Split Literals in the same way as the blocks
 
                 else:
                     print(f"INSTRUCTION WITHOUT OEPRANDS: {insn}")
@@ -395,11 +403,6 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         renamed_value_constants_negative = name_value_constants(
             value_constants_negative
         )
-        if len(renamed_value_constants) != 0:
-            # print(f"\nValue Constants")
-            for key, value in renamed_value_constants.items():
-                # print(f"{key}, {value}")
-                pass
 
         # Take all candidates for value constant literals and check which of those are known constants
         # First, sort the items once
@@ -427,29 +430,16 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             sorted(non_matching.items(), key=lambda item: item[1], reverse=True)
         )
 
-        value_constant_literals = name_value_constant_literals(sorted_matching, "VAL_CONST_LIT_")
-
-        if len(value_constant_literals) != 0:
-            # print("Value Constant Literals")
-            for key, value in value_constant_literals.items():
-                # print(f"{key}, {value}")
-                pass
+        value_constant_literals = name_value_constant_literals(sorted_matching, "VALUED_CONST_LIT_")
 
         opaque_constants, opaque_constant_literals = name_opaque_constants(
-            sorted_non_matching, "OP_CONST_LIT_"
+            sorted_non_matching, "OPAQUE_CONST_LIT_"
         )
-        if len(opaque_constants) != 0:
-            # print("Opaque Constants")
-            for key, value in opaque_constants.items():
-                # print(f"{key}, {value}")
-                pass
-        if len(opaque_constant_literals) != 0:
-            # print("Opaque Constant Literals")
-            for key, value in opaque_constant_literals.items():
-                # print(f"{key}, {value}")
-                pass
 
         # print(temp_bbs)
+        function_addr_range: list[dict[int, tuple[str, str]]] = func_addr_range[func_addr]
+        print(function_addr_range)
+
         for block_code in temp_bbs:
             # print(block_code)
             token_list = []
@@ -478,15 +468,16 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                     opaque_constants,
                     opaque_constant_literals,
                     mnemonics,
-                    symbol_tokens
+                    symbol_tokens,
+                    function_addr_range
                 )
                 # print(f"TOKEN STREAM: {token_stream}")
                 token_list.append(token_stream)
                 #print(token_stream)
             temp_tk.append({block_dict[block_addr]: token_list})
 
-        func_disas[index] = temp_bbs
-        func_disas_token[index] = temp_tk
+        func_disas[func_name] = temp_bbs
+        func_disas_token[func_name] = temp_tk
     return (func_disas, func_disas_token)
 
 
@@ -498,7 +489,8 @@ def parse_instruction(
     opaque_constants,
     opaque_constant_literals,
     mnemonics,
-    symbol_tokens
+    symbol_tokens,
+    func_addr_range: list
 ) -> str:
     """
     Tokenizes a single instruction dictionary into prefix, mnemonic, and operand tokens.
@@ -574,7 +566,8 @@ def parse_instruction(
                             renamed_value_constants_negative,
                             value_constant_literals,
                             opaque_constants,
-                            opaque_constant_literals
+                            opaque_constant_literals,
+                            func_addr_range,
                         )
                     )
                 elif s.isdigit():  # byte constants
@@ -585,7 +578,8 @@ def parse_instruction(
                             renamed_value_constants_negative,
                             value_constant_literals,
                             opaque_constants,
-                            opaque_constant_literals
+                            opaque_constant_literals,
+                            func_addr_range
                         )
                     )
 
@@ -611,8 +605,14 @@ def resolve_constant(
     renamed_value_constants_negative,
     value_constant_literals,
     opaque_constants,
-    opaque_constant_literals
+    opaque_constant_literals,
+    func_addr_range: list[dict[int, tuple[str, str]]]
+
 ):
+    for element in func_addr_range:
+        for block_nr, bounds in element.items():
+            if int(s, 16) in range(int(bounds[0], 16), int(bounds[1], 16)):
+                return f"BLOCK_{block_nr}"
     return (
         renamed_value_constants.get(s, [None])[0]
         or renamed_value_constants_negative.get(s, [None])[0]
@@ -685,7 +685,7 @@ def name_value_constant_literals(vcl: dict, base_name: str) -> dict[str, tuple[s
     counter = 0
     for addr, freq in vcl.items():
         if counter <= 16:
-            new_name = f"VAL_CONST_LIT_{counter}"
+            new_name = f"VAL_CONST_LIT_{hex(counter)}"
             renamed_dict[addr] = (new_name, freq)
         else:
             new_name = register_name_range(counter, base_name)
@@ -706,10 +706,8 @@ def name_value_constants(vc: dict) -> dict[str, tuple[str, int]]:
     """
     renamed_dict = {}
     for addr, freq in vc.items():
-        if int(addr, 16) >= 0:
-            new_name = f"VAL_CONST_{int(addr, 16)}"
-        else:
-            new_name = f"VAL_CONST{int(addr, 16)}"
+        #print(f"INTEGER: {int(addr, 16)}, HEX: {addr[2:]}")
+        new_name = f"VAL_CONST{addr[2:]}"
         renamed_dict[addr] = (new_name, freq)
     return renamed_dict
 
@@ -861,5 +859,19 @@ def main():
 if __name__ == "__main__":
     main()
 
-# TODO Function names as tokens also in Code
-# TODO Fix Blockname resolution
+
+# TODO Neuer Token "BLOCK" für Calls innerhalb der Funktion
+# TODO Value Constants von 16 auf 255 Values
+# TODO Kodierung von Literals auf hex anstatt auf Binary
+# TODO Val const Zähler auf hex ändern
+
+# TODO Datei mit Pointer : type, Value - register which call addressess point to what datum
+
+
+"""
+0: {type: Local function, name: fibonacci}
+1: {type: String, value: "Hello World I love u"}
+2: {type: Library function, name: read_file, library: libc}
+3: {type: Library function, name: close_file, library: libc}
+
+"""
