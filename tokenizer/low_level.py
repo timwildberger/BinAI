@@ -338,44 +338,40 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                                     else:
                                         value_constant_literals_candidates[hex(imm_val)] = 1
 
-                                elif text_start <= imm_val <= text_end:
-                                    print("ITS IN TEXT")
-                                    if insn.mnemonic in arithmetic_instructions:
-                                        print("\tITS ARITHMETIC")
+                                if insn.mnemonic in arithmetic_instructions:
+                                    print("\tITS ARITHMETIC")
+                                    if hex(imm_val) in value_constant_literals_candidates:
+                                        value_constant_literals_candidates[hex(imm_val)] += 1
+                                    else:
+                                        value_constant_literals_candidates[hex(imm_val)] = 1
+                                elif insn.mnemonic in addressing_control_flow_instructions:
+                                    print("\tITS CONTROL FLOW")
+                                    if func_min_addr <= (imm_val) < func_max_addr:
+                                        print("\t\tITS LOCAL")
                                         if hex(imm_val) in value_constant_literals_candidates:
                                             value_constant_literals_candidates[hex(imm_val)] += 1
                                         else:
                                             value_constant_literals_candidates[hex(imm_val)] = 1
-                                    elif insn.mnemonic in addressing_control_flow_instructions:
-                                        print("\tITS CONTROL FLOW")
-                                        if func_min_addr <= (imm_val) < func_max_addr:
-                                            print("\t\tITS LOCAL")
-                                            if hex(imm_val) in value_constant_literals_candidates:
-                                                value_constant_literals_candidates[hex(imm_val)] += 1
-                                            else:
-                                                value_constant_literals_candidates[hex(imm_val)] = 1
-                                        else:
-                                            print("\t\tITS NON LOCAL")
-                                            if hex(imm_val) in opaque_candidates:
-                                                opaque_candidates[hex(imm_val)] += 1
-                                            else:
-                                                opaque_candidates[hex(imm_val)] = 1
                                     else:
-                                        print("ITS SOMETHING ELSE")
+                                        print("\t\tITS NON LOCAL")
                                         if hex(imm_val) in opaque_candidates:
                                             opaque_candidates[hex(imm_val)] += 1
                                         else:
                                             opaque_candidates[hex(imm_val)] = 1
                                 else:
-                                    print(f"ITS REALLY SOMETHING ELSE")
+                                    print("ITS SOMETHING ELSE")
                                     if hex(imm_val) in opaque_candidates:
                                         opaque_candidates[hex(imm_val)] += 1
                                     else:
                                         opaque_candidates[hex(imm_val)] = 1
+                                
 
                         elif op.type == 3:  # MEMORY
                             disp = op.mem.disp
                             disp = abs(disp)
+
+                            print(f"Base: {op.mem.base}\nIndex: {op.mem.index}\nScale: {op.mem.scale}\nDisp: {op.mem.disp}")
+
                             if 0x00 <= disp <= 0xFF:
                                 if hex(disp) in value_constants:
                                     value_constants[hex(disp)] += 1
@@ -425,7 +421,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
             temp_bbs.append({block_addr: disassembly_list})
             # print(temp_bbs)
             block_counter += 1
-        print(f"Funktion finished: {func_name}")
+        #print(f"Funktion finished: {func_name}")
 
         block_list = sorted(block_list, key=lambda d: list(d.values())[0][0])
         func_addr_range[func_addr] = block_list
@@ -457,21 +453,11 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         opaque_constants, opaque_constant_literals = name_opaque_constants(
             sorted_opaque_candidates, "OPAQUE_CONST_LIT"
         )
-        with open("lalala.txt", "w", encoding="utf-8") as f:
-            for element in opaque_constants.keys():
-                try:
-                    f.write(constant_list[element])
-                except:
-                    pass
-            for element in opaque_constant_literals.keys():
-                try:
-                    f.write(constant_list[element])
-                except:
-                    pass
 
 
-        print(f"OPAQUE CANDIDATES: {opaque_candidates}")
-        print(f"VALUED CONSTANT LITERALS: {value_constant_literals}\nOPAQUE CONSTANTS & OPAQUE CONSTANT LITERALS: {opaque_constants}, {opaque_constant_literals}")
+
+        #print(f"OPAQUE CANDIDATES: {opaque_candidates}")
+        #print(f"VALUED CONSTANT LITERALS: {value_constant_literals}\nOPAQUE CONSTANTS & OPAQUE CONSTANT LITERALS: {opaque_constants}, {opaque_constant_literals}")
 
 
         # print(temp_bbs)
@@ -515,7 +501,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
 
         func_disas[func_name] = temp_bbs
         func_disas_token[func_name] = temp_tk
-        break
+        
     return (func_disas, func_disas_token)
 
 
@@ -956,8 +942,6 @@ def parse_init_sections(proj, output_txt="parsed_init_sections.txt", sections_to
 
 def main():
     file_path = "src/clamav/x86-gcc-9-O3_clambc"
-    from elftools.elf.elffile import ELFFile
-    with open("src/curl/x86-clang-3.5-O0_curl", "rb") as how
     # print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
 
     project = angr.Project("src/curl/x86-clang-3.5-O0_curl", auto_load_libs=False)
