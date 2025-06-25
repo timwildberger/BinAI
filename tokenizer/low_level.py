@@ -326,6 +326,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                                 print(insn.mnemonic)
                                 # Large immediate value, potentially address or large constant
                                 if hex(imm_val) in constant_list:
+                                    print(f"JEEET")
                                     # Known constant address
                                     value_constant_literals_candidates[hex(imm_val)] = value_constant_literals_candidates.get(hex(imm_val), 0) + 1
                                 elif text_start <= imm_val < text_end:
@@ -345,6 +346,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                                         opaque_candidates[hex(imm_val)] = opaque_candidates.get(hex(imm_val), 0) + 1
                                 else:
                                     # Otherwise treat as large immediate literal value
+                                    print(f"FAAF")
                                     value_constant_literals_candidates[hex(imm_val)] = value_constant_literals_candidates.get(hex(imm_val), 0) + 1
                             else:
                                 print(f"Unexpected immediate value: {imm_val} at instruction {insn.mnemonic}")
@@ -423,37 +425,19 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         )
 
         # Then, iterate once and split into matching and non-matching
-        matching = {}
-        non_matching = {}
-
-        for k, v in sorted_items:
-            if k in constant_list:  # does this address refer to a known constant?
-                matching[k] = v
-            elif text_start <= int(k, 16) < text_end:  # does this address point to somewhere inside the .text section?
-                matching[k] = v  # --> it must point to code then
-            else:
-                non_matching[k] = v
-
-        # Now, include all opaque_candidates that are NOT already in non_matching or matching
-        for k, v in opaque_candidates.items():
-            if k not in matching and k not in non_matching:
-                non_matching[k] = v
-            elif k in non_matching:
-                non_matching[k] += v  # accumulate counts if already present
-
-        # Sort both matching and non_matching again by frequency descending
-        sorted_matching = dict(
-            sorted(matching.items(), key=lambda item: item[1], reverse=True)
+        # Only use classification we already did earlier during parsing
+        sorted_value_constant_literals = dict(
+            sorted(value_constant_literals_candidates.items(), key=lambda item: item[1], reverse=True)
         )
-        sorted_non_matching = dict(
-            sorted(non_matching.items(), key=lambda item: item[1], reverse=True)
+        sorted_opaque_candidates = dict(
+            sorted(opaque_candidates.items(), key=lambda item: item[1], reverse=True)
         )
 
         # Name the constants
-        value_constant_literals = name_value_constant_literals(sorted_matching, "VALUED_CONST_LIT")
+        value_constant_literals = name_value_constant_literals(sorted_value_constant_literals, "VALUED_CONST_LIT")
 
         opaque_constants, opaque_constant_literals = name_opaque_constants(
-            sorted_non_matching, "OPAQUE_CONST_LIT"
+            sorted_opaque_candidates, "OPAQUE_CONST_LIT"
         )
 
         print(f"OPAQUE CANDIDATES: {opaque_candidates}")
