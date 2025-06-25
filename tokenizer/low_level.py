@@ -113,27 +113,6 @@ def classify_operand_value(value, section_ranges, known_constant_addrs):
         return ("UnknownConstant", value)
 
 
-def annotate_disassembly_with_constants(proj, const_map):
-    cfg = proj.analyses.CFGFast()
-    for func in cfg.functions.values():
-        for block in func.blocks:
-            for insn in block.capstone.insns:
-                tokens = []
-                for op in insn.operands:
-
-                    if op.type == 2:  # MEM operand type
-                        # op.mem.disp is displacement, effective address approx.
-                        addr = op.mem.disp
-                        if addr in const_map:
-                            type_str, val = const_map[addr]
-                            tokens.append(f"{type_str}({val})")
-                        else:
-                            tokens.append(f"MEM[0x{addr:x}]")
-                    elif op.type == 1:  # IMM
-                        tokens.append(f"IMM({op.imm})")
-                    else:
-                        tokens.append(insn.op_str)
-                print(f"{insn.mnemonic} {' '.join(tokens)}")
 
 
 def extract_ldis_blocks_from_file(file_path):
@@ -184,14 +163,23 @@ def register_name_range(id: int, basename) -> str:
     Block number < 16: Block0 - BlockF
     Block number > 16: BlockLitStart BlockLit1 BlockLit0 BlockLitEnd
     """
-    if id < 16:
+
+    """
+    Creates tokens for block indexes.
+    Block number < 255: Block00 -  BlockFF
+    Block number > 255: BlockLitStart BlockLit{HEX VALUE} BlockLit{HEX VALUE} BlockLitEnd"""
+    if id < 255:
         name = f"{basename}{str(hex(id)[2:]).upper()}"
     else:
         binary_list = list(bin(id)[2:])
+        id_str = hex(id)[2:].upper()
+        chunks = [id_str[i: i+2] for i in range(0, len(id_str), 2)]
+        print(chunks)
         name = f"{basename}Start"
-        for element in binary_list:
+        for element in chunks:
             name += f" {basename}Lit{element}"
         name += f" {basename}End"
+        print(name)
     return name
 
 
@@ -214,9 +202,8 @@ def lowlevel_disas(cfg, constant_list) -> dict:
     - OpaqueConstants: memory references using base registers or unresolved values
     - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
     """
-    func_addr_range: dict[int, list[dict[int, tuple[str, str]]]] = {} # (func_addr, func_name): [{block_nr: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
+    func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = {} # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
     func_disas: dict[str, str] = {}
-    # TODO Function name / address in 
     func_disas_token = {}
     inv_prefix_tokens = {
         "0xF0": "x86_lock",
@@ -239,16 +226,12 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         counter = 0
         for block in func.blocks:
             func_max_addr = max(func_min_addr, block.addr + block.size)
-            block_list.append({counter : (hex(func_min_addr), hex(func_max_addr))})
+            block_list.append({register_name_range(counter, basename="Block") : (hex(func_min_addr), hex(func_max_addr))})
             blocks.add(hex(block.addr))
             counter += 1
         block_list = sorted(block_list, key=lambda d: list(d.values())[0][0])
         func_addr_range[func_addr] = block_list
 
-
-    # func_addr_range = sorted(func_addr_range, key=lambda d: list(d.keys())[0][0])
-    for key, value in func_addr_range.items():
-        print(f"{key}: {value}")
 
 
     for func_addr, func in cfg.functions.items():
@@ -437,8 +420,7 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         )
 
         # print(temp_bbs)
-        function_addr_range: list[dict[int, tuple[str, str]]] = func_addr_range[func_addr]
-        print(function_addr_range)
+        function_addr_range: list[dict[str, tuple[str, str]]] = func_addr_range[func_addr]
 
         for block_code in temp_bbs:
             # print(block_code)
@@ -612,7 +594,7 @@ def resolve_constant(
     for element in func_addr_range:
         for block_nr, bounds in element.items():
             if int(s, 16) in range(int(bounds[0], 16), int(bounds[1], 16)):
-                return f"BLOCK_{block_nr}"
+                return block_nr
     return (
         renamed_value_constants.get(s, [None])[0]
         or renamed_value_constants_negative.get(s, [None])[0]
@@ -662,7 +644,7 @@ def name_opaque_constants(
     opaque_constant_literals = {}
     for addr, freq in occ.items():
         if counter < 16:
-            new_name = f"OP_CONST_{counter}"
+            new_name = f"OP_CONST_{hex(counter)[2:].upper()}"
             opaque_constants[addr] = (new_name, freq)
         else:
             new_name = register_name_range(counter, base_name)
@@ -685,7 +667,7 @@ def name_value_constant_literals(vcl: dict, base_name: str) -> dict[str, tuple[s
     counter = 0
     for addr, freq in vcl.items():
         if counter <= 16:
-            new_name = f"VAL_CONST_LIT_{hex(counter)}"
+            new_name = f"VAL_CONST_LIT_{hex(counter)[2:].upper()}"
             renamed_dict[addr] = (new_name, freq)
         else:
             new_name = register_name_range(counter, base_name)
@@ -707,7 +689,7 @@ def name_value_constants(vc: dict) -> dict[str, tuple[str, int]]:
     renamed_dict = {}
     for addr, freq in vc.items():
         #print(f"INTEGER: {int(addr, 16)}, HEX: {addr[2:]}")
-        new_name = f"VAL_CONST{addr[2:]}"
+        new_name = f"VAL_CONST_{addr[2:].upper()}"
         renamed_dict[addr] = (new_name, freq)
     return renamed_dict
 
@@ -861,9 +843,7 @@ if __name__ == "__main__":
 
 
 # TODO Neuer Token "BLOCK" für Calls innerhalb der Funktion
-# TODO Value Constants von 16 auf 255 Values
 # TODO Kodierung von Literals auf hex anstatt auf Binary
-# TODO Val const Zähler auf hex ändern
 
 # TODO Datei mit Pointer : type, Value - register which call addressess point to what datum
 
