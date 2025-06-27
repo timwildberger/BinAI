@@ -63,17 +63,36 @@ class AddressMetaDataLookup:
         except Exception:
             pass # stripped binary fallback
 
-        # -- Functions (range)
+        
+        # -- Functions (range) with local vs library classification
         try:
             for func in self.cfg.kb.functions.values():
                 if func.size == 0:
                     continue
-                self.range_lookup[func.addr:func.addr + func.size] = {
+
+                # Determine function category
+                if func.binary == main_obj:
+                    func_type = 'local_function'
+                    source = 'function'
+                    library = None
+                elif func.is_simprocedure or func.is_plt:
+                    func_type = 'library_function'
+                    source = 'library'
+                    library = func.binary.binary if func.binary else 'unknown'
+                else:
+                    func_type = 'local_function'
+                    source = 'function'
+                    library = None
+
+                meta = {
                     'name': func.name,
-                    'type': 'function',
+                    'type': func_type,
                     'size': func.size,
-                    'source': 'function'
+                    'source': source,
+                    'library': library
                 }
+
+                self.range_lookup[func.addr:func.addr + func.size] = meta
         except Exception:
             pass
 

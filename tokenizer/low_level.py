@@ -3,8 +3,6 @@ import re
 import csv
 from pathlib import Path
 from capstone import *
-from typing import Tuple
-import binary_parser as Parser
 from address_meta_data_lookup import AddressMetaDataLookup
 
 """
@@ -167,6 +165,14 @@ def register_name_range(id: int, basename) -> str:
     return name
 
 
+def register_value_in_dict(dict: dict, value: str) -> dict:
+    if value not in dict:
+        dict[value] = 1
+    else:
+        dict[value] += 1
+    return dict
+
+
 def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -> dict:
     """
     Operand types: (in theory)
@@ -198,7 +204,7 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
     3: {type: Library function, name: close_file, library: libc}
     """
 
-    opaque_const_meta: dict[int, list[str]] = {}
+    opaque_const_meta: dict[str, list[str]] = {}
 
     func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = {} # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
     func_disas: dict[str, str] = {}
@@ -223,7 +229,7 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
     }
 
     addressing_control_flow_instructions = {
-        "jmp", "call", "je", "jz", "jne", "jnz", "jg", "jnle", "jge", "jnl", "jl", "jnge", "jle",
+        "jmp", "call", "je", "jz", "jne", "jnz", "jg", "js", "jnle", "jge", "jnl", "jns", "jl", "jnge", "jle",
         "jng", "ja", "jnbe", "jae", "jnb", "jb", "jnae", "jbe", "jna", "loop", "loope", "loopne",
         "mov", "lea", "push", "pop", "cmp", "test", "int"
     }
@@ -264,7 +270,6 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
     blocks = set()
 
     # BINARY PARSER FOR CONSTANT LOOKUP
-    parser = Parser.BinaryParser(path)
     lookup = AddressMetaDataLookup(project, cfg)
 
 
@@ -361,15 +366,6 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
                                 0x100 <= imm_val <= (2**128 - 1)
                                 or (-(2**127)) <= imm_val <= -0x100
                             ):
-                                if insn.mnemonic in addressing_control_flow_instructions:
-                                    meta, kind = lookup.lookup(imm_val)
-                                    if kind != 'miss':
-                                        print(f"[{kind}] {imm_val} --> {meta}")
-                                    else:
-                                        print(f"Address {imm_val} not found")
-                                
-
-
                                 # V1
                                 """metadata = parser.get_metadata(imm_val)
                                 if metadata:
@@ -442,48 +438,38 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
                                 
                                 # V2
                                 if hex(imm_val) in constant_list.keys(): # is it a constant
-                                    #print("ITS A CONSTANT")
-                                    if hex(imm_val) in value_constant_literals_candidates:
-                                        value_constant_literals_candidates[hex(imm_val)] += 1
-                                    else:
-                                        value_constant_literals_candidates[hex(imm_val)] = 1
+                                    value_constant_literals_candidates = register_value_in_dict(value_constant_literals_candidates, hex(imm_val))
                                 else: # Not a known constant
-                                    if insn.mnemonic in addressing_control_flow_instructions:
-                                        if kind == "range":
-                                            if func_min_addr <= imm_val < func_max_addr: # Local
-                                                print(f"Local")
-                                                if hex(imm_val) in value_constant_literals_candidates:
-                                                    value_constant_literals_candidates[hex(imm_val)] += 1
+                                    meta, kind = lookup.lookup(imm_val)
+                                    if meta is not None:
+                                        if insn.mnemonic in addressing_control_flow_instructions:
+                                            if kind == "range":
+                                                if func_min_addr <= imm_val < func_max_addr: # Local
+                                                    print(f"Local")
+                                                    value_constant_literals_candidates = register_value_in_dict(value_constant_literals_candidates, hex(imm_val))
                                                 else:
-                                                    value_constant_literals_candidates[hex(imm_val)] = 1
+                                                    print("Non-local") # Non-Local
+                                                    if meta['name'] not in opaque_const_meta:
+                                                        opaque_const_meta[meta['name']] = [hex(meta['start_addr']), hex(meta['end_addr']), meta['type'], meta['library']]
+                                                        #opaque_const_meta[hex(imm_val)] = [f"{k}={v}" for k, v in meta.items()]
+                                                    opaque_candidates = register_value_in_dict(opaque_candidates, hex(imm_val))
                                             else:
-                                                print("Non-local") # Non-Local
-                                                if hex(imm_val) in opaque_candidates:
-                                                    opaque_candidates[hex(imm_val)] += 1
-                                                else:
-                                                    opaque_candidates[hex(imm_val)] = 1
+                                                print("Unresolvable")
+                                                if meta['name'] not in opaque_const_meta:
+                                                    opaque_const_meta[meta['name']] = [hex(meta['start_addr']), hex(meta['end_addr']), meta['type']]
+                                                opaque_candidates = register_value_in_dict(opaque_candidates, hex(imm_val))
+                                        elif insn.mnemonic in arithmetic_instructions:
+                                            print(f"ARITHMETIC")
+                                            value_constant_literals_candidates = register_value_in_dict(value_constant_literals_candidates, hex(imm_val))
                                         else:
-                                            print("Unresolvable")
-                                            if hex(imm_val) in opaque_candidates:
-                                                opaque_candidates[hex(imm_val)] += 1
-                                            else:
-                                                opaque_candidates[hex(imm_val)] = 1
-                                    elif insn.mnemonic in arithmetic_instructions:
-                                        print(f"ARITHMETIC")
-                                        if hex(imm_val) in value_constant_literals_candidates:
-                                            value_constant_literals_candidates[hex(imm_val)] += 1
-                                        else:
-                                            value_constant_literals_candidates[hex(imm_val)] = 1
+                                            if meta['name'] not in opaque_const_meta:
+                                                opaque_const_meta[meta['name']] = [hex(meta['start_addr']), hex(meta['end_addr']), meta['type']]
+                                            opaque_candidates = register_value_in_dict(opaque_candidates, hex(imm_val))
                                     else: # Fallback
-                                        if hex(imm_val) in opaque_candidates:
-                                            opaque_candidates[hex(imm_val)] += 1
-                                        else:
-                                            opaque_candidates[hex(imm_val)] = 1
+                                        opaque_candidates = register_value_in_dict(opaque_candidates, hex(imm_val))
+
+                    
                                     
-
-
-
-
                         elif op.type == 3:  # MEMORY
                             disp = op.mem.disp
                             disp = abs(disp)
@@ -510,7 +496,7 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
                                     print(f"ITS IN THE TEXT")
                                     opaque_candidates[hex(disp)] = opaque_candidates.get(hex(disp), 0) + 1
                                 elif disp < func_min_addr or disp > func_max_addr:
-                                    print("ITS")
+                                    print("ITS Non-Local")
                                     opaque_candidates[hex(disp)] = opaque_candidates.get(hex(disp), 0) + 1
                                 else:
                                     value_constant_literals_candidates[hex(disp)] = value_constant_literals_candidates.get(hex(disp), 0) + 1
@@ -527,7 +513,6 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
                             if b != 0 and f"0x{b:02X}" in inv_prefix_tokens
                     ]
                 disassembly_list.append([insn.mnemonic, insn.op_str, disasssembly_stream])
-                # print(insn.mnemonic, insn.op_str)
 
                 # Use only the mnemonic itself, without prefixes
                 mnemonic = insn.mnemonic.strip()
@@ -537,13 +522,12 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
                     mnemonics[mnemonic] = mnemonic_to_token(mnemonic)
 
             temp_bbs.append({block_addr: disassembly_list})
-            # print(temp_bbs)
             block_counter += 1
-        #print(f"Funktion finished: {func_name}")
+
 
         block_list = sorted(block_list, key=lambda d: list(d.values())[0][0])
         func_addr_range[func_addr] = block_list
-        #print(opaque_candidates)
+
         # handle the constants dict
         # VALUE CONSTANTS 0x00 bis 0xFF
         # sorted_value_constants = dict(sorted(value_constants.items(), key=lambda item: item[1], reverse=True))
@@ -626,8 +610,10 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
 
         func_disas[func_name] = temp_bbs
         func_disas_token[func_name] = temp_tk
+
+
         
-    return (func_disas, func_disas_token)
+    return (func_disas, func_disas_token, opaque_const_meta)
 
 
 def parse_instruction(
@@ -1081,7 +1067,12 @@ def main():
     # const_map = build_constant_map(project)
     # annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
-    disassembly, disassembly_tokenized = lowlevel_disas(file_path, cfg, constants, plt_stubs, init_section_data)
+    disassembly, disassembly_tokenized, opaque_constants_meta = lowlevel_disas(file_path, cfg, constants, plt_stubs, init_section_data)
+
+    with open("opaque_const_meta.txt", encoding="utf-8", mode="w") as f:
+        for k, v in opaque_constants_meta.items():
+            f.write(f"{k}: {v}\n")
+
     with open("test.txt", encoding="utf-8", mode="w") as f:
         f.write("Function name, assembly\n")
         for (k1, v1), (k2, v2) in zip(
