@@ -4,6 +4,8 @@ import csv
 from pathlib import Path
 from capstone import *
 from typing import Tuple
+import binary_parser as Parser
+from address_meta_data_lookup import AddressMetaDataLookup
 
 """
 Blöcke 0 bis 16:
@@ -165,7 +167,7 @@ def register_name_range(id: int, basename) -> str:
     return name
 
 
-def lowlevel_disas(cfg, constant_list) -> dict:
+def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -> dict:
     """
     Operand types: (in theory)
     0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
@@ -227,17 +229,45 @@ def lowlevel_disas(cfg, constant_list) -> dict:
     }
 
     # Get .text section size
-    project = angr.Project("src/curl/x86-clang-3.5-O0_curl", auto_load_libs=False)
+    project = angr.Project(path, auto_load_libs=False)
     obj = project.loader.main_object
     text_start: int = 0
     text_end: int = 0
+    data_start: int = 0
+    data_end: int = 0
+    rodata_start: int = 0
+    rodata_end: int = 0
+    plt_start: int = 0
+    plt_end: int = 0
+    init_start: int = 0
+    init_end: int = 0
+
     for section in obj.sections:
         if section.name == ".text":
             text_start = section.vaddr         # virtuelle Startadresse
             text_size = section.memsize        # Größe in Bytes
             text_end = text_start + text_size
+        elif section.name == ".data":
+            data_start = section.vaddr
+            data_end = data_start + section.memsize
+        elif section.name == ".rodata":
+            rodata_start = section.vaddr
+            rodata_end = rodata_start + section.memsize
+        elif section.name == ".plt":
+            plt_start = section.vaddr
+            plt_end = plt_start + section.memsize
+        elif section.name == ".init":
+            init_start = section.vaddr
+            init_end = init_start + section.memsize
+
 
     blocks = set()
+
+    # BINARY PARSER FOR CONSTANT LOOKUP
+    parser = Parser.BinaryParser(path)
+    lookup = AddressMetaDataLookup(project, cfg)
+
+
 
 
     for func_addr, func in cfg.functions.items():
@@ -331,46 +361,134 @@ def lowlevel_disas(cfg, constant_list) -> dict:
                                 0x100 <= imm_val <= (2**128 - 1)
                                 or (-(2**127)) <= imm_val <= -0x100
                             ):
+                                if insn.mnemonic in addressing_control_flow_instructions:
+                                    meta, kind = lookup.lookup(imm_val)
+                                    if kind != 'miss':
+                                        print(f"[{kind}] {imm_val} --> {meta}")
+                                    else:
+                                        print(f"Address {imm_val} not found")
+                                
+
+
+                                # V1
+                                """metadata = parser.get_metadata(imm_val)
+                                if metadata:
+                                    print(f"Metadata for address {hex(imm_val)}: {metadata}")
+                                else:
+                                    print(f"No metadata found for address {hex(imm_val)}.")
                                 if hex(imm_val) in constant_list.keys(): # is it a constant
-                                    print("ITS A CONSTANT")
+                                    #print("ITS A CONSTANT")
                                     if hex(imm_val) in value_constant_literals_candidates:
                                         value_constant_literals_candidates[hex(imm_val)] += 1
                                     else:
                                         value_constant_literals_candidates[hex(imm_val)] = 1
 
                                 if insn.mnemonic in arithmetic_instructions:
-                                    print("\tITS ARITHMETIC")
+                                    #print("\tITS ARITHMETIC")
                                     if hex(imm_val) in value_constant_literals_candidates:
                                         value_constant_literals_candidates[hex(imm_val)] += 1
                                     else:
                                         value_constant_literals_candidates[hex(imm_val)] = 1
                                 elif insn.mnemonic in addressing_control_flow_instructions:
-                                    print("\tITS CONTROL FLOW")
+                                    if text_start <= imm_val < text_end:
+                                        print("\tITS IN TEXT")
+                                    else:
+                                        print("\tITS OUTSIDE OF TEXT")
+
+                                    if data_start <= imm_val < data_end:
+                                        print(f"\tITS IN DATA")
+                                    else:
+                                        print("\tITS OUTSIDE OF DATA")
+                                    
+                                    if rodata_start <= imm_val < rodata_end:
+                                        print(f"\tITS IN RODATA")
+                                    else:
+                                        print("\tITS OUTSIDE OF RODATA")
+
+                                    if plt_start <= imm_val < plt_end:
+                                        print(f"\tITS IN PLT")
+                                    else:
+                                        print("\tITS OUTSIDE OF PLT")
+
+                                    if hex(imm_val) in plt_stub_data:
+                                        print(f"\tITS A STUB")
+                                    elif hex(imm_val) in init_section_data:
+                                        print(f"ITS AN INIT")
+
+                                    if init_start <= imm_val < init_end:
+                                        print(f"\tITS IN INIT")
+                                    else:
+                                        print("\tITS OUTSIDE OF INIT")
+
+                                    print("\tITS CONTROL FLOW)
                                     if func_min_addr <= (imm_val) < func_max_addr:
-                                        print("\t\tITS LOCAL")
+                                        #print("\t\tITS LOCAL")
                                         if hex(imm_val) in value_constant_literals_candidates:
                                             value_constant_literals_candidates[hex(imm_val)] += 1
                                         else:
                                             value_constant_literals_candidates[hex(imm_val)] = 1
                                     else:
-                                        print("\t\tITS NON LOCAL")
+                                        #print("\t\tITS NON LOCAL")
                                         if hex(imm_val) in opaque_candidates:
                                             opaque_candidates[hex(imm_val)] += 1
                                         else:
                                             opaque_candidates[hex(imm_val)] = 1
                                 else:
-                                    print("ITS SOMETHING ELSE")
+                                    #print("ITS SOMETHING ELSE")
                                     if hex(imm_val) in opaque_candidates:
                                         opaque_candidates[hex(imm_val)] += 1
                                     else:
-                                        opaque_candidates[hex(imm_val)] = 1
+                                        opaque_candidates[hex(imm_val)] = 1"""
                                 
+                                # V2
+                                if hex(imm_val) in constant_list.keys(): # is it a constant
+                                    #print("ITS A CONSTANT")
+                                    if hex(imm_val) in value_constant_literals_candidates:
+                                        value_constant_literals_candidates[hex(imm_val)] += 1
+                                    else:
+                                        value_constant_literals_candidates[hex(imm_val)] = 1
+                                else: # Not a known constant
+                                    if insn.mnemonic in addressing_control_flow_instructions:
+                                        if kind == "range":
+                                            if func_min_addr <= imm_val < func_max_addr: # Local
+                                                print(f"Local")
+                                                if hex(imm_val) in value_constant_literals_candidates:
+                                                    value_constant_literals_candidates[hex(imm_val)] += 1
+                                                else:
+                                                    value_constant_literals_candidates[hex(imm_val)] = 1
+                                            else:
+                                                print("Non-local") # Non-Local
+                                                if hex(imm_val) in opaque_candidates:
+                                                    opaque_candidates[hex(imm_val)] += 1
+                                                else:
+                                                    opaque_candidates[hex(imm_val)] = 1
+                                        else:
+                                            print("Unresolvable")
+                                            if hex(imm_val) in opaque_candidates:
+                                                opaque_candidates[hex(imm_val)] += 1
+                                            else:
+                                                opaque_candidates[hex(imm_val)] = 1
+                                    elif insn.mnemonic in arithmetic_instructions:
+                                        print(f"ARITHMETIC")
+                                        if hex(imm_val) in value_constant_literals_candidates:
+                                            value_constant_literals_candidates[hex(imm_val)] += 1
+                                        else:
+                                            value_constant_literals_candidates[hex(imm_val)] = 1
+                                    else: # Fallback
+                                        if hex(imm_val) in opaque_candidates:
+                                            opaque_candidates[hex(imm_val)] += 1
+                                        else:
+                                            opaque_candidates[hex(imm_val)] = 1
+                                    
+
+
+
 
                         elif op.type == 3:  # MEMORY
                             disp = op.mem.disp
                             disp = abs(disp)
 
-                            print(f"Base: {op.mem.base}\nIndex: {op.mem.index}\nScale: {op.mem.scale}\nDisp: {op.mem.disp}")
+                            #print(f"Base: {op.mem.base}\nIndex: {op.mem.index}\nScale: {op.mem.scale}\nDisp: {op.mem.disp}")
 
                             if 0x00 <= disp <= 0xFF:
                                 if hex(disp) in value_constants:
@@ -445,6 +563,13 @@ def lowlevel_disas(cfg, constant_list) -> dict:
         sorted_opaque_candidates = dict(
             sorted(opaque_candidates.items(), key=lambda item: item[1], reverse=True)
         )
+        """
+            Opaque Const Metadaten:
+            0: {type: Local function, name: fibonacci}  
+            1: {type: String, value: "Hello World I love u"}
+            2: {type: Library function, name: read_file, library: libc}
+            3: {type: Library function, name: close_file, library: libc}
+        """
 
 
         # Name the constants
@@ -748,9 +873,8 @@ def name_value_constants(vc: dict) -> dict[str, tuple[str, int]]:
     return renamed_dict
 
 
-def parse_and_save_data_sections(proj, output_txt="parsed_data.txt"):
+def parse_and_save_data_sections(proj, sections_to_parse: list[str], output_txt="parsed_data.txt"):
     # Erweiterte Liste der Sektionen
-    sections_to_parse = [".rodata", ".data"]
     all_entries = []
     addr_dict = {}
 
@@ -941,12 +1065,15 @@ def parse_init_sections(proj, output_txt="parsed_init_sections.txt", sections_to
 
 
 def main():
-    file_path = "src/clamav/x86-gcc-9-O3_clambc"
+    file_path = "src/curl/x86-clang-3.5-O0_curl"
     # print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
 
-    project = angr.Project("src/curl/x86-clang-3.5-O0_curl", auto_load_libs=False)
-    section_data = parse_and_save_data_sections(project)
+    project = angr.Project(file_path, auto_load_libs=False)
+    sections_for_constants: list[str] = [".rodata", ".data"]
+    constants = parse_and_save_data_sections(project, sections_for_constants)
+    plt_stubs = parse_and_save_data_sections(project, [".plt"])
     init_section_data = parse_init_sections(project)
+
     #print(section_data)
     
     # print(section_data)
@@ -954,7 +1081,7 @@ def main():
     # const_map = build_constant_map(project)
     # annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
-    disassembly, disassembly_tokenized = lowlevel_disas(cfg, section_data)
+    disassembly, disassembly_tokenized = lowlevel_disas(file_path, cfg, constants, plt_stubs, init_section_data)
     with open("test.txt", encoding="utf-8", mode="w") as f:
         f.write("Function name, assembly\n")
         for (k1, v1), (k2, v2) in zip(
