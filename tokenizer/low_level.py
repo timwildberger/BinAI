@@ -30,7 +30,6 @@ Konstanten:
 """
 
 
-
 def extract_constants_from_section(proj, section):
     """
     Extracts constants from a section, classifying them as:
@@ -113,8 +112,6 @@ def classify_operand_value(value, section_ranges, known_constant_addrs):
         return ("UnknownConstant", value)
 
 
-
-
 def extract_ldis_blocks_from_file(file_path):
     """
     Reads a structured CSV-like file and extracts disassembly blocks from <LDIS> tags.
@@ -157,7 +154,7 @@ def register_name_range(id: int, basename) -> str:
         name = f"{basename}_{str(hex(id)[2:]).upper()}"
     else:
         id_str = hex(id)[2:].upper()
-        chunks = [id_str[i: i+2] for i in range(0, len(id_str), 2)]
+        chunks = [id_str[i : i + 2] for i in range(0, len(id_str), 2)]
         name = f"{basename}_Start"
         for element in chunks:
             name += f" {basename}_{element}"
@@ -173,7 +170,7 @@ def register_value_in_dict(dict: dict, value: str) -> dict:
     return dict
 
 
-def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -> dict:
+def lowlevel_disas(path, cfg, constant_list) -> dict:
     """
     Operand types: (in theory)
     0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
@@ -194,11 +191,11 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
 
 
     Immediate: hex value can be value or hex address
-    Memory: hex value MUST be an 
+    Memory: hex value MUST be an
 
 
     Opaque Const Metadaten:
-    0: {type: Local function, name: fibonacci}  
+    0: {type: Local function, name: fibonacci}
     1: {type: String, value: "Hello World I love u"}
     2: {type: Library function, name: read_file, library: libc}
     3: {type: Library function, name: close_file, library: libc}
@@ -206,7 +203,9 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
 
     opaque_const_meta: dict[str, list[str]] = {}
 
-    func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = {} # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
+    func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = (
+        {}
+    )  # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
     func_disas: dict[str, str] = {}
     func_disas_token = {}
     inv_prefix_tokens = {
@@ -224,14 +223,67 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
     }
 
     arithmetic_instructions = {
-    "add", "sub", "mul", "imul", "div", "idiv", "inc", "dec", "and", "or", "xor", "not", "neg",
-        "shl", "shr", "sar", "sal", "rol", "ror", "cmp", "test", "adc", "sbb", "lea"
+        "add",
+        "sub",
+        "mul",
+        "imul",
+        "div",
+        "idiv",
+        "inc",
+        "dec",
+        "and",
+        "or",
+        "xor",
+        "not",
+        "neg",
+        "shl",
+        "shr",
+        "sar",
+        "sal",
+        "rol",
+        "ror",
+        "cmp",
+        "test",
+        "adc",
+        "sbb",
+        "lea",
     }
 
     addressing_control_flow_instructions = {
-        "jmp", "call", "je", "jz", "jne", "jnz", "jg", "js", "jnle", "jge", "jnl", "jns", "jl", "jnge", "jle",
-        "jng", "ja", "jnbe", "jae", "jnb", "jb", "jnae", "jbe", "jna", "loop", "loope", "loopne",
-        "mov", "lea", "push", "pop", "cmp", "test", "int"
+        "jmp",
+        "call",
+        "je",
+        "jz",
+        "jne",
+        "jnz",
+        "jg",
+        "js",
+        "jnle",
+        "jge",
+        "jnl",
+        "jns",
+        "jl",
+        "jnge",
+        "jle",
+        "jng",
+        "ja",
+        "jnbe",
+        "jae",
+        "jnb",
+        "jb",
+        "jnae",
+        "jbe",
+        "jna",
+        "loop",
+        "loope",
+        "loopne",
+        "mov",
+        "lea",
+        "push",
+        "pop",
+        "cmp",
+        "test",
+        "int",
     }
 
     # Get .text section size
@@ -239,41 +291,17 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
     obj = project.loader.main_object
     text_start: int = 0
     text_end: int = 0
-    data_start: int = 0
-    data_end: int = 0
-    rodata_start: int = 0
-    rodata_end: int = 0
-    plt_start: int = 0
-    plt_end: int = 0
-    init_start: int = 0
-    init_end: int = 0
 
     for section in obj.sections:
         if section.name == ".text":
-            text_start = section.vaddr         # virtuelle Startadresse
-            text_size = section.memsize        # Größe in Bytes
+            text_start = section.vaddr  # virtuelle Startadresse
+            text_size = section.memsize  # Größe in Bytes
             text_end = text_start + text_size
-        elif section.name == ".data":
-            data_start = section.vaddr
-            data_end = data_start + section.memsize
-        elif section.name == ".rodata":
-            rodata_start = section.vaddr
-            rodata_end = rodata_start + section.memsize
-        elif section.name == ".plt":
-            plt_start = section.vaddr
-            plt_end = plt_start + section.memsize
-        elif section.name == ".init":
-            init_start = section.vaddr
-            init_end = init_start + section.memsize
-
 
     blocks = set()
 
     # BINARY PARSER FOR CONSTANT LOOKUP
     lookup = AddressMetaDataLookup(project, cfg)
-
-
-
 
     for func_addr, func in cfg.functions.items():
         # print("\n"))
@@ -288,10 +316,10 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
 
         temp_bbs: list[dict[str, list[str]]] = []
         temp_tk: list[dict[str, list[str]]] = []
-        disassembly_list: list[str]
-        token_list: list[str]
+        disassembly_list: list[str] = []
+        token_list: list[str] = []
 
-        block_dict: dict[str, str] = {} # hex value of Block address: block_name
+        block_dict: dict[str, str] = {}  # hex value of Block address: block_name
         mnemonics = {}
         symbol_tokens = {}
 
@@ -303,18 +331,23 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
 
         block_counter = 0
         for block in func.blocks:
-
+            
             func_max_addr = max(func_min_addr, block.addr + block.size)
-            block_list.append({register_name_range(block_counter, basename="Block") : (hex(func_min_addr), hex(func_max_addr))})
+            block_name = register_name_range(block_counter, basename="Block")
+            block_list.append(
+                {
+                    block_name: (
+                        hex(func_min_addr),
+                        hex(func_max_addr),
+                    )
+                }
+            )
             blocks.add(hex(block.addr))
 
             if block.capstone.insns is None:
                 print("KAPUTT")
             block_addr = hex(block.addr)
-            block_str = register_name_range(
-                block_counter, basename="Block")
-            block_dict[block_addr] = block_str
-            # print(block_dict)
+            block_dict[block_addr] = block_name
 
             disassembly_list = []
 
@@ -332,10 +365,6 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
                             mnemonics[prefix_name] = mnemonic_to_token(prefix_name)
                         symbol_tokens[prefix_name] = mnemonics[prefix_name]
 
-                # print(f"Original capstone object: {insn.insn}")
-                # print(f"Original prefix: {insn.insn.prefix}")
-                # print((insn.prefix))
- 
                 insn_list = []
 
                 if hasattr(insn, "operands"):
@@ -395,7 +424,7 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
                                         print(f"\tITS IN DATA")
                                     else:
                                         print("\tITS OUTSIDE OF DATA")
-                                    
+
                                     if rodata_start <= imm_val < rodata_end:
                                         print(f"\tITS IN RODATA")
                                     else:
@@ -435,46 +464,98 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
                                         opaque_candidates[hex(imm_val)] += 1
                                     else:
                                         opaque_candidates[hex(imm_val)] = 1"""
-                                
+
                                 # V2
-                                if hex(imm_val) in constant_list.keys(): # is it a constant
-                                    value_constant_literals_candidates = register_value_in_dict(value_constant_literals_candidates, hex(imm_val))
-                                else: # Not a known constant
-                                    meta, kind = lookup.lookup(imm_val)
-                                    if meta is not None:
-                                        if insn.mnemonic in addressing_control_flow_instructions:
+                                if (
+                                    hex(imm_val) in constant_list.keys()
+                                ):  # is it a constant
+                                    print(f"ITS A CONSTANT")
+                                    value_constant_literals_candidates = (
+                                        register_value_in_dict(
+                                            value_constant_literals_candidates,
+                                            hex(imm_val),
+                                        )
+                                    )
+                                    print(f"\t{constant_list[hex(imm_val)]}")
+                                else:  # Not a known constant
+                                    print(f"ITS NOT A KNOWN CONSTANT")
+                                
+                                    print(f"\tTHE LOOKUP FOUND SOMETHING")
+                                    if insn.mnemonic in arithmetic_instructions:
+                                        print(f"\t\tARITHMETIC")
+                                        value_constant_literals_candidates = (
+                                            register_value_in_dict(
+                                                value_constant_literals_candidates,
+                                                hex(imm_val),
+                                            )
+                                        )
+                                    elif (
+                                        insn.mnemonic
+                                        in addressing_control_flow_instructions
+                                    ):
+                                        print(f"\t\tCONTROL FLOW")
+                                        meta, kind = lookup.lookup(imm_val)
+                                        if meta is not None:
                                             if kind == "range":
-                                                if func_min_addr <= imm_val < func_max_addr: # Local
-                                                    print(f"Local")
-                                                    value_constant_literals_candidates = register_value_in_dict(value_constant_literals_candidates, hex(imm_val))
+                                                print(f"\t\t\tMUST BE A FUNCTION CALL")
+                                                if (
+                                                    func_min_addr
+                                                    <= imm_val
+                                                    < func_max_addr
+                                                ):  # Local
+                                                    print(f"\t\t\t\tLocal")
+                                                    value_constant_literals_candidates = register_value_in_dict(
+                                                        value_constant_literals_candidates,
+                                                        hex(imm_val),
+                                                    )
                                                 else:
-                                                    print("Non-local") # Non-Local
-                                                    if meta['name'] not in opaque_const_meta:
-                                                        opaque_const_meta[meta['name']] = [hex(meta['start_addr']), hex(meta['end_addr']), meta['type'], meta['library']]
-                                                        #opaque_const_meta[hex(imm_val)] = [f"{k}={v}" for k, v in meta.items()]
-                                                    opaque_candidates = register_value_in_dict(opaque_candidates, hex(imm_val))
+                                                    print("\t\t\t\tNon-local")  # Non-Local
+                                                    if (
+                                                        meta["name"]
+                                                        not in opaque_const_meta
+                                                    ):
+                                                        opaque_const_meta[
+                                                            meta["name"]
+                                                        ] = [
+                                                            hex(meta["start_addr"]),
+                                                            hex(meta["end_addr"]),
+                                                            meta["type"],
+                                                            meta["library"],
+                                                        ]
+                                                        # opaque_const_meta[hex(imm_val)] = [f"{k}={v}" for k, v in meta.items()]
+                                                    opaque_candidates = (
+                                                        register_value_in_dict(
+                                                            opaque_candidates,
+                                                            hex(imm_val),
+                                                        )
+                                                    )
                                             else:
                                                 print("Unresolvable")
-                                                if meta['name'] not in opaque_const_meta:
-                                                    opaque_const_meta[meta['name']] = [hex(meta['start_addr']), hex(meta['end_addr']), meta['type']]
-                                                opaque_candidates = register_value_in_dict(opaque_candidates, hex(imm_val))
-                                        elif insn.mnemonic in arithmetic_instructions:
-                                            print(f"ARITHMETIC")
-                                            value_constant_literals_candidates = register_value_in_dict(value_constant_literals_candidates, hex(imm_val))
-                                        else:
-                                            if meta['name'] not in opaque_const_meta:
-                                                opaque_const_meta[meta['name']] = [hex(meta['start_addr']), hex(meta['end_addr']), meta['type']]
-                                            opaque_candidates = register_value_in_dict(opaque_candidates, hex(imm_val))
-                                    else: # Fallback
-                                        opaque_candidates = register_value_in_dict(opaque_candidates, hex(imm_val))
+                                                if (
+                                                    meta["name"]
+                                                    not in opaque_const_meta
+                                                ):
+                                                    opaque_const_meta[meta["name"]] = [
+                                                        hex(meta["start_addr"]),
+                                                        hex(meta["end_addr"]),
+                                                        meta["type"],
+                                                    ]
+                                                opaque_candidates = (
+                                                    register_value_in_dict(
+                                                        opaque_candidates, hex(imm_val)
+                                                    )
+                                                )
+                                    else:  # Fallback
+                                        print(f"FALLBACK")
+                                        opaque_candidates = register_value_in_dict(
+                                            opaque_candidates, hex(imm_val)
+                                        )
 
-                    
-                                    
                         elif op.type == 3:  # MEMORY
                             disp = op.mem.disp
                             disp = abs(disp)
 
-                            #print(f"Base: {op.mem.base}\nIndex: {op.mem.index}\nScale: {op.mem.scale}\nDisp: {op.mem.disp}")
+                            # print(f"Base: {op.mem.base}\nIndex: {op.mem.index}\nScale: {op.mem.scale}\nDisp: {op.mem.disp}")
 
                             if 0x00 <= disp <= 0xFF:
                                 if hex(disp) in value_constants:
@@ -491,28 +572,42 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
                                 # For larger displacements, check if pointing to known constant or code or opaque
                                 if hex(disp) in constant_list:
                                     print(f"ITS A CONSTANT")
-                                    value_constant_literals_candidates[hex(disp)] = value_constant_literals_candidates.get(hex(disp), 0) + 1
+                                    value_constant_literals_candidates[hex(disp)] = (
+                                        value_constant_literals_candidates.get(
+                                            hex(disp), 0
+                                        )
+                                        + 1
+                                    )
                                 elif text_start <= disp < text_end:
                                     print(f"ITS IN THE TEXT")
-                                    opaque_candidates[hex(disp)] = opaque_candidates.get(hex(disp), 0) + 1
+                                    opaque_candidates[hex(disp)] = (
+                                        opaque_candidates.get(hex(disp), 0) + 1
+                                    )
                                 elif disp < func_min_addr or disp > func_max_addr:
                                     print("ITS Non-Local")
-                                    opaque_candidates[hex(disp)] = opaque_candidates.get(hex(disp), 0) + 1
+                                    opaque_candidates[hex(disp)] = (
+                                        opaque_candidates.get(hex(disp), 0) + 1
+                                    )
                                 else:
-                                    value_constant_literals_candidates[hex(disp)] = value_constant_literals_candidates.get(hex(disp), 0) + 1
-
+                                    value_constant_literals_candidates[hex(disp)] = (
+                                        value_constant_literals_candidates.get(
+                                            hex(disp), 0
+                                        )
+                                        + 1
+                                    )
 
                 else:
                     print(f"INSTRUCTION WITHOUT OEPRANDS: {insn}")
                     raise TypeError
                 print((insn.mnemonic, insn.op_str))
-                print(f"Operand types: {insn_list}\n")
                 disasssembly_stream: list[str] = [
-                            inv_prefix_tokens[f"0x{b:02X}"]
-                            for b in insn.prefix
-                            if b != 0 and f"0x{b:02X}" in inv_prefix_tokens
-                    ]
-                disassembly_list.append([insn.mnemonic, insn.op_str, disasssembly_stream])
+                    inv_prefix_tokens[f"0x{b:02X}"]
+                    for b in insn.prefix
+                    if b != 0 and f"0x{b:02X}" in inv_prefix_tokens
+                ]
+                disassembly_list.append(
+                    [insn.mnemonic, insn.op_str, disasssembly_stream]
+                )
 
                 # Use only the mnemonic itself, without prefixes
                 mnemonic = insn.mnemonic.strip()
@@ -524,16 +619,17 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
             temp_bbs.append({block_addr: disassembly_list})
             block_counter += 1
 
-
         block_list = sorted(block_list, key=lambda d: list(d.values())[0][0])
         func_addr_range[func_addr] = block_list
 
         # handle the constants dict
         # VALUE CONSTANTS 0x00 bis 0xFF
         # sorted_value_constants = dict(sorted(value_constants.items(), key=lambda item: item[1], reverse=True))
-        renamed_value_constants: dict[str, tuple[str, int]] = name_value_constants(value_constants)
-        renamed_value_constants_negative: dict[str, tuple[str, int]] = name_value_constants(
-            value_constants_negative
+        renamed_value_constants: dict[str, tuple[str, int]] = name_value_constants(
+            value_constants
+        )
+        renamed_value_constants_negative: dict[str, tuple[str, int]] = (
+            name_value_constants(value_constants_negative)
         )
 
         # Take all candidates for value constant literals and check which of those are known constants
@@ -542,7 +638,11 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
         # Then, iterate once and split into matching and non-matching
         # Only use classification we already did earlier during parsing
         sorted_value_constant_literals = dict(
-            sorted(value_constant_literals_candidates.items(), key=lambda item: item[1], reverse=True)
+            sorted(
+                value_constant_literals_candidates.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )
         )
         sorted_opaque_candidates = dict(
             sorted(opaque_candidates.items(), key=lambda item: item[1], reverse=True)
@@ -555,30 +655,30 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
             3: {type: Library function, name: close_file, library: libc}
         """
 
-
         # Name the constants
-        value_constant_literals = name_value_constant_literals(sorted_value_constant_literals, "VALUED_CONST_LIT")
+        value_constant_literals = name_value_constant_literals(
+            sorted_value_constant_literals, "VALUED_CONST_LIT"
+        )
 
         opaque_constants, opaque_constant_literals = name_opaque_constants(
             sorted_opaque_candidates, "OPAQUE_CONST_LIT"
         )
 
-
-
-        #print(f"OPAQUE CANDIDATES: {opaque_candidates}")
-        #print(f"VALUED CONSTANT LITERALS: {value_constant_literals}\nOPAQUE CONSTANTS & OPAQUE CONSTANT LITERALS: {opaque_constants}, {opaque_constant_literals}")
-
+        # print(f"OPAQUE CANDIDATES: {opaque_candidates}")
+        # print(f"VALUED CONSTANT LITERALS: {value_constant_literals}\nOPAQUE CONSTANTS & OPAQUE CONSTANT LITERALS: {opaque_constants}, {opaque_constant_literals}")
 
         # print(temp_bbs)
-        function_addr_range: list[dict[str, tuple[str, str]]] = func_addr_range[func_addr]
+        function_addr_range: list[dict[str, tuple[str, str]]] = func_addr_range[
+            func_addr
+        ]
 
         for block_code in temp_bbs:
             # print(block_code)
             token_list = []
             block_addr: str
-            block_instrs: list[str] 
+            block_instrs: list[str]
             # There is only one item --> traversal like this is fine
-            for addr, op_str in block_code.items(): # dict[str, list[str]]
+            for addr, op_str in block_code.items():  # dict[str, list[str]]
                 block_addr = addr
                 block_instrs = op_str
 
@@ -601,18 +701,16 @@ def lowlevel_disas(path, cfg, constant_list, plt_stub_data, init_section_data) -
                     opaque_constant_literals,
                     mnemonics,
                     symbol_tokens,
-                    function_addr_range
+                    function_addr_range,
                 )
                 # print(f"TOKEN STREAM: {token_stream}")
                 token_list.append(token_stream)
-                #print(token_stream)
+                print(token_stream)
             temp_tk.append({block_dict[block_addr]: token_list})
 
         func_disas[func_name] = temp_bbs
         func_disas_token[func_name] = temp_tk
-
-
-        
+        break
     return (func_disas, func_disas_token, opaque_const_meta)
 
 
@@ -625,7 +723,7 @@ def parse_instruction(
     opaque_constant_literals,
     mnemonics,
     symbol_tokens,
-    func_addr_range: list
+    func_addr_range: list,
 ) -> str:
     """
     Tokenizes a single instruction dictionary into prefix, mnemonic, and operand tokens.
@@ -664,7 +762,7 @@ def parse_instruction(
 
     token_lst = []
 
-    # Add prefix tokens first 
+    # Add prefix tokens first
     """
     for prefix in prefixes:
         if prefix in symbol_tokens:
@@ -714,7 +812,7 @@ def parse_instruction(
                             value_constant_literals,
                             opaque_constants,
                             opaque_constant_literals,
-                            func_addr_range
+                            func_addr_range,
                         )
                     )
 
@@ -741,11 +839,11 @@ def resolve_constant(
     value_constant_literals,
     opaque_constants,
     opaque_constant_literals,
-    func_addr_range: list[dict[int, tuple[str, str]]]
+    func_addr_range: list[dict[int, tuple[str, str]]],
 ):
     """
     Returns the tokenrepresentation depending on the data type.
-    
+
     Args:
         s (str): The element of the disassembly stream that is to be converted to a token
         renamed_value_constants (dict[str, tuple[str, int]]): Dict with all positive value constant tokens
@@ -790,7 +888,7 @@ def get_memory_op_type(size: int) -> str:
         return "tmmword ptr"
     else:
         raise ValueError
-    
+
 
 def name_opaque_constants(
     occ: dict, base_name: str
@@ -818,7 +916,9 @@ def name_opaque_constants(
     return opaque_constants, opaque_constant_literals
 
 
-def name_value_constant_literals(vcl: dict, base_name: str) -> dict[str, tuple[str, int]]:
+def name_value_constant_literals(
+    vcl: dict, base_name: str
+) -> dict[str, tuple[str, int]]:
     """
     Takes a sorted dict of value constant literals and gives them a descriptive token name: e.g. 0x7c --> x86_VALCONST_124
 
@@ -853,14 +953,27 @@ def name_value_constants(vc: dict) -> dict[str, tuple[str, int]]:
     """
     renamed_dict = {}
     for addr, freq in vc.items():
-        #print(f"INTEGER: {int(addr, 16)}, HEX: {addr[2:]}")
+        # print(f"INTEGER: {int(addr, 16)}, HEX: {addr[2:]}")
         new_name = f"VALUED_CONST_{addr[2:].upper()}"
         renamed_dict[addr] = (new_name, freq)
     return renamed_dict
 
 
-def parse_and_save_data_sections(proj, sections_to_parse: list[str], output_txt="parsed_data.txt"):
-    # Erweiterte Liste der Sektionen
+
+def parse_and_save_data_sections(
+    proj, sections_to_parse: list[str]=[".rodata"], output_txt="parsed_constants.txt"
+):
+    """
+    Parses the .rodata (read-only data) section to retrieve a dict with all constants.
+
+    Args:
+        proj: angr Project
+        sections_to_parse (list[str]): Contains per default only '.rodata'
+        output_txt (str): Name of the file for persistence
+
+    Returns:
+        dict with all constants of structure: start_addr: [end_addr, section_name, value] 
+    """
     all_entries = []
     addr_dict = {}
 
@@ -869,126 +982,40 @@ def parse_and_save_data_sections(proj, sections_to_parse: list[str], output_txt=
         for match in re.finditer(b"[\x20-\x7e]{4,}\x00", data):
             s = match.group().rstrip(b"\x00").decode("utf-8", errors="ignore")
             start = base_addr + match.start()
-            entries.append({
-                "section": ".rodata",
-                "start": hex(start),
-                "end": hex(start + len(s) + 1),
-                "value": f'"{s}"'
-            })
+            entries.append(
+                {
+                    "section": ".rodata",
+                    "start": hex(start),
+                    "end": hex(start + len(s) + 1),
+                    "value": f'"{s}"',
+                }
+            )
         return entries
 
-    def parse_data(data, base_addr, word_size, section_name):
-        entries = []
-        for i in range(0, len(data), word_size):
-            chunk = data[i:i + word_size]
-            if len(chunk) != word_size:
-                continue
-            val = int.from_bytes(chunk, byteorder="little")
-            start = base_addr + i
-            entries.append({
-                "section": section_name,
-                "start": hex(start),
-                "end": hex(start + word_size),
-                "value": hex(val)
-            })
-        return entries
-
-    def parse_plt(data, base_addr):
-        entries = []
-        stub_size = proj.arch.bytes  # üblicherweise 8 Byte auf x86_64
-        for i in range(0, len(data), stub_size):
-            addr = base_addr + i
-            entries.append({
-                "section": ".plt",
-                "start": hex(addr),
-                "end": hex(addr + stub_size),
-                "value": f"plt_stub_{hex(addr)}"
-            })
-        return entries
-
-    # 1) Sektionen aus sections_to_parse parsen
+    # Only process .rodata or other truly constant sections
     for sec in proj.loader.main_object.sections:
         if sec.name not in sections_to_parse:
             continue
-
-        # bss ist meist uninitialized, enthält keine Daten im File, sondern nur Größe
-        if sec.name == ".bss":
-            # Erstelle fiktive Einträge mit None oder 0 als Wert
-            start = sec.vaddr
-            size = sec.memsize
-            word_size = proj.arch.bytes
-            entries = []
-            for addr in range(start, start + size, word_size):
-                entries.append({
-                    "section": ".bss",
-                    "start": hex(addr),
-                    "end": hex(addr + word_size),
-                    "value": "uninitialized"
-                })
-        else:
+        if sec.name == ".rodata" and sec.is_readable and sec.memsize > 0:
             data = proj.loader.memory.load(sec.vaddr, sec.memsize)
-            if sec.name == ".rodata":
-                entries = parse_rodata(data, sec.vaddr)
-            elif sec.name == ".plt":
-                entries = parse_plt(data, sec.vaddr)
-            elif sec.name in (".data", ".data.rel.ro", ".plt.got"):
-                entries = parse_data(data, sec.vaddr, word_size=proj.arch.bytes, section_name=sec.name)
-            else:
-                entries = []
+            entries = parse_rodata(data, sec.vaddr)
+            all_entries.extend(entries)
+            for e in entries:
+                addr_dict[e["start"]] = [e["end"], e["section"], e["value"]]
 
-        all_entries.extend(entries)
-        for e in entries:
-            addr_dict[e["start"]] = [e["end"], e["section"], e["value"]]
-
-    # 2) Symbole aus .symtab und .dynsym hinzufügen (sofern vorhanden)
-    obj = proj.loader.main_object
-    sym_tables = []
-    if hasattr(obj, "symbols") and obj.symbols:
-        sym_tables.append(obj.symbols)
-    if hasattr(obj, "dynamic_symbols") and obj.dynamic_symbols:
-        sym_tables.append(obj.dynamic_symbols)
-
-    for symtab in sym_tables:
-        for sym in symtab:
-            if not (getattr(sym, "is_function", False) or getattr(sym, "is_object", False)):
-                continue
-            if sym.rebased_addr is None or sym.rebased_addr == 0:
-                continue
-            addr = hex(sym.rebased_addr)
-            # Wenn Adresse schon existiert, ergänze den Namen, sonst neuen Eintrag
-            if addr in addr_dict:
-                # Namen ergänzen, wenn noch nicht gesetzt oder Default-Wert
-                if addr_dict[addr][2] is None or addr_dict[addr][2].startswith("plt_stub_") or addr_dict[addr][2] == "uninitialized":
-                    addr_dict[addr][2] = sym.name
-            else:
-                addr_dict[addr] = [addr, ".symtab/dynsym", sym.name]
-
-    # 3) PLT-Symbole aus Imports mit Namen anreichern (optional, falls noch nicht vorhanden)
-    for sym in obj.symbols:
-        if sym.is_import and sym.name and sym.rebased_addr is not None and sym.rebased_addr != 0:
-            addr = hex(sym.rebased_addr)
-            if addr in addr_dict:
-                if addr_dict[addr][2] is None or addr_dict[addr][2].startswith("plt_stub_"):
-                    addr_dict[addr][2] = sym.name
-            else:
-                addr_dict[addr] = [addr, ".plt", sym.name]
-
-    # Ausgabe in Datei
+    # Output only exact-address constants
     with open(output_txt, "w") as f:
         for e in all_entries:
             f.write(f'{e["section"]}, {e["start"]} - {e["end"]}: {e["value"]}\n')
-        f.write("\n# PLT / Symtab / Dynsym Symbole mit Namen\n")
-        for addr, info in sorted(addr_dict.items(), key=lambda x: int(x[0], 16)):
-            section = info[1]
-            value = info[2]
-            if value and not value.startswith("plt_stub_"):
-                f.write(f"{section}, {addr}: {value}\n")
 
-    print(f"Parsed {len(all_entries)} section entries + Symbols into {output_txt}")
+    print(f"Parsed {len(all_entries)} .rodata constants with exact addresses into {output_txt}")
     return addr_dict
 
 
-def parse_init_sections(proj, output_txt="parsed_init_sections.txt", sections_to_parse=None):
+
+def parse_init_sections(
+    proj, output_txt="parsed_init_sections.txt", sections_to_parse=None
+):
     """
     Parse ELF .init/.fini/.init_array/.fini_array sections and write to file.
 
@@ -1021,7 +1048,7 @@ def parse_init_sections(proj, output_txt="parsed_init_sections.txt", sections_to
             if section.name.endswith("_array"):
                 word_size = proj.arch.bytes
                 for i in range(0, len(data), word_size):
-                    chunk = data[i:i + word_size]
+                    chunk = data[i : i + word_size]
                     if len(chunk) != word_size:
                         continue
                     val = int.from_bytes(chunk, byteorder="little")
@@ -1030,10 +1057,12 @@ def parse_init_sections(proj, output_txt="parsed_init_sections.txt", sections_to
                         "start": hex(section.vaddr + i),
                         "end": hex(section.vaddr + i + word_size),
                         "value": hex(val),
-                        "type": "pointer"
+                        "type": "pointer",
                     }
                     entries.append(entry)
-                    f.write(f"{entry['section']}, {entry['start']} - {entry['end']}: {entry['value']} (ptr)\n")
+                    f.write(
+                        f"{entry['section']}, {entry['start']} - {entry['end']}: {entry['value']} (ptr)\n"
+                    )
             else:
                 hex_preview = data[:32].hex()
                 entry = {
@@ -1041,10 +1070,12 @@ def parse_init_sections(proj, output_txt="parsed_init_sections.txt", sections_to
                     "start": hex(section.vaddr),
                     "end": hex(section.vaddr + section.memsize),
                     "value": f"hex({hex_preview}...)",
-                    "type": "code"
+                    "type": "code",
                 }
                 entries.append(entry)
-                f.write(f"{entry['section']}, {entry['start']} - {entry['end']}: {entry['value']} (code)\n")
+                f.write(
+                    f"{entry['section']}, {entry['start']} - {entry['end']}: {entry['value']} (code)\n"
+                )
 
     print(f"Parsed {len(entries)} entries from init-related sections into {output_txt}")
     return entries
@@ -1055,19 +1086,17 @@ def main():
     # print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
 
     project = angr.Project(file_path, auto_load_libs=False)
-    sections_for_constants: list[str] = [".rodata", ".data"]
-    constants = parse_and_save_data_sections(project, sections_for_constants)
-    plt_stubs = parse_and_save_data_sections(project, [".plt"])
-    init_section_data = parse_init_sections(project)
+    constants = parse_and_save_data_sections(project)
 
-    #print(section_data)
-    
+    # print(section_data)
+
     # print(section_data)
 
     # const_map = build_constant_map(project)
     # annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
-    disassembly, disassembly_tokenized, opaque_constants_meta = lowlevel_disas(file_path, cfg, constants, plt_stubs, init_section_data)
+    disassembly, disassembly_tokenized, opaque_constants_meta = lowlevel_disas(
+        file_path, cfg, constants)
 
     with open("opaque_const_meta.txt", encoding="utf-8", mode="w") as f:
         for k, v in opaque_constants_meta.items():
@@ -1141,7 +1170,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 
 
 # TODO Datei mit Pointer : type, Value - register which call addressess point to what datum
