@@ -64,8 +64,8 @@ def fill_constant_candidates(
     func_name: str,
     func_addr: int,
     func: angr.knowledge_plugins.functions.function.Function,
-    arithmetic_instructions: set,
-    addressing_control_flow_instructions: set,
+    arithmetic_instructions: set[str],
+    addressing_control_flow_instructions: set[str],
     inv_prefix_tokens: dict[str, str],
     constant_dict: dict[str, list[str]],
     opaque_const_meta: dict[str, list[str]],
@@ -73,7 +73,6 @@ def fill_constant_candidates(
     text_start: int,
     text_end: int
 ) -> Optional[tuple[
-    dict[str, int],
     dict[str, int],
     dict[str, int],
     dict[str, int],
@@ -111,7 +110,6 @@ def fill_constant_candidates(
     blocks: set = set()
 
     value_constants: dict[str, int] = {}
-    value_constants_negative: dict[str, int] = {}
     value_constant_literals_candidates: dict[str, int] = {}
     opaque_candidates: dict[str, int] = {}
 
@@ -122,18 +120,6 @@ def fill_constant_candidates(
     symbol_tokens: dict[str, str] = {}
 
     block_dict: dict[str, str] = {}  # hex value of Block address: block_name
-
-    """
-    value_constants,
-    value_constants_negative,
-    value_constant_literals_candidates,
-    opaque_candidates,
-    temp_bbs,
-    block_list,
-    mnemonics, 
-    symbol_tokens,
-    block_dict
-    """
 
     block_counter: int = 0
     for block in func.blocks:
@@ -184,21 +170,7 @@ def fill_constant_candidates(
                             insn.reg_name(op.reg)
                         )
                     elif op.type == 2:  # IMMEDIATE
-                        imm_val = op.imm
-                        # V1
-                        """
-                        if 0x00 <= imm_val <= 0xFF:
-                            if hex(imm_val) in value_constants:
-                                value_constants[hex(imm_val)] += 1
-                            else:
-                                value_constants[hex(imm_val)] = 1
-                        elif -0x80 <= imm_val <= -0x01:
-                            if hex(imm_val) in value_constants_negative:
-                                value_constants_negative[hex(imm_val)] += 1
-                            else:
-                                value_constants[hex(imm_val)] = 1
-                        """
-                        imm_val = abs(imm_val)
+                        imm_val = abs(op.imm)
                         if 0x00 <= imm_val <= 0xFF:
                             if hex(imm_val) in value_constants:
                                 value_constants[hex(imm_val)] += 1
@@ -291,12 +263,6 @@ def fill_constant_candidates(
                                 value_constants[hex(disp)] += 1
                             else:
                                 value_constants[hex(disp)] = 1
-                        elif -0x80 <= disp <= -0x01:
-                            if hex(disp) in value_constants_negative:
-                                value_constants_negative[hex(disp)] += 1
-                            else:
-                                value_constants[hex(disp)] = 1
-                            raise ValueError
                         else:
                             # For larger displacements, check if pointing to known constant or code or opaque
                             if hex(disp) in constant_dict:
@@ -344,7 +310,6 @@ def fill_constant_candidates(
         block_counter += 1
     return (
         value_constants,
-        value_constants_negative,
         value_constant_literals_candidates,
         opaque_candidates,
         temp_bbs,
@@ -441,21 +406,20 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
         assert function_analysis[0] is not None
         value_constants: dict[str, int] = function_analysis[0]
         assert function_analysis[1] is not None
-        value_constants_negative: dict[str, int] = function_analysis[1]
+        value_constant_literals_candidates: dict[str, int] = function_analysis[1]
         assert function_analysis[2] is not None
-        value_constant_literals_candidates: dict[str, int] = function_analysis[2]
+        opaque_candidates: dict[str, int] = function_analysis[2]
         assert function_analysis[3] is not None
-        opaque_candidates: dict[str, int] = function_analysis[3]
+        temp_bbs: list[dict[str, list[list[Union[str, list[str]]]]]] = function_analysis[3]
         assert function_analysis[4] is not None
-        temp_bbs: list[dict[str, list[list[Union[str, list[str]]]]]] = function_analysis[4]
+        block_list: list[dict[str, tuple[str, str]]] = function_analysis[4]
         assert function_analysis[5] is not None
-        block_list: list[dict[str, tuple[str, str]]] = function_analysis[5]
+        mnemonics: dict[str, str] = function_analysis[5]
         assert function_analysis[6] is not None
-        mnemonics: dict[str, str] = function_analysis[6]
+        symbol_tokens: dict[str, str] = function_analysis[6]
         assert function_analysis[7] is not None
-        symbol_tokens: dict[str, str] = function_analysis[7]
-        assert function_analysis[8] is not None
-        block_dict: dict[str, str] = function_analysis[8]
+        block_dict: dict[str, str] = function_analysis[7]
+
 
 
         func_addr_range[func_addr] = sorted(
@@ -466,9 +430,6 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
         # VALUE CONSTANTS 0x00 bis 0xFF
         renamed_value_constants: dict[str, tuple[str, int]] = name_value_constants(
             value_constants
-        )
-        renamed_value_constants_negative: dict[str, tuple[str, int]] = (
-            name_value_constants(value_constants_negative)
         )
 
         # Take all candidates for value constant literals and check which of those are known constants
@@ -494,7 +455,7 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
         ]
 
         
-        temp_tk = create_tokenstream(temp_bbs=temp_bbs, renamed_value_constants=renamed_value_constants, renamed_value_constants_negative=renamed_value_constants_negative, value_constant_literals=value_constant_literals, opaque_constants=opaque_constants, opaque_constant_literals=opaque_constant_literals, mnemonics=mnemonics, symbol_tokens=symbol_tokens, function_addr_range=function_addr_range, block_dict=block_dict)
+        temp_tk = create_tokenstream(temp_bbs=temp_bbs, renamed_value_constants=renamed_value_constants, value_constant_literals=value_constant_literals, opaque_constants=opaque_constants, opaque_constant_literals=opaque_constant_literals, mnemonics=mnemonics, symbol_tokens=symbol_tokens, function_addr_range=function_addr_range, block_dict=block_dict)
         vocab, tokenized_instructions, block_run_lengths, insn_run_lengths = build_vocab_tokenize_and_index(temp_tk, vocab)
         #print(f"Token stream: {temp_tk}")
         #print(f"Tokenized instructions: {tokenized_instructions}")
@@ -523,7 +484,6 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
 
 
 def create_tokenstream(temp_bbs, renamed_value_constants,
-                    renamed_value_constants_negative,
                     value_constant_literals,
                     opaque_constants,
                     opaque_constant_literals,
@@ -546,7 +506,6 @@ def create_tokenstream(temp_bbs, renamed_value_constants,
             block_token_stream: str = parse_instruction(
                 code_snippet,
                 renamed_value_constants,
-                renamed_value_constants_negative,
                 value_constant_literals,
                 opaque_constants,
                 opaque_constant_literals,
@@ -615,7 +574,6 @@ def build_vocab_tokenize_and_index(
 def parse_instruction(
     ins_dict,
     renamed_value_constants,
-    renamed_value_constants_negative,
     value_constant_literals,
     opaque_constants,
     opaque_constant_literals,
@@ -694,7 +652,6 @@ def parse_instruction(
                         resolve_constant(
                             s,
                             renamed_value_constants,
-                            renamed_value_constants_negative,
                             value_constant_literals,
                             opaque_constants,
                             opaque_constant_literals,
@@ -706,7 +663,6 @@ def parse_instruction(
                         resolve_constant(
                             hex(int(s)),
                             renamed_value_constants,
-                            renamed_value_constants_negative,
                             value_constant_literals,
                             opaque_constants,
                             opaque_constant_literals,
@@ -733,7 +689,6 @@ def mnemonic_to_token(mnemonic) -> str:
 def resolve_constant(
     s,
     renamed_value_constants,
-    renamed_value_constants_negative,
     value_constant_literals,
     opaque_constants,
     opaque_constant_literals,
@@ -745,7 +700,6 @@ def resolve_constant(
     Args:
         s (str): The element of the disassembly stream that is to be converted to a token
         renamed_value_constants (dict[str, tuple[str, int]]): dict with all positive value constant tokens
-        renamed_value_constants_negative (dict[str, tuple[str, int]]): dict with all negative value constant tokens
         value_constant_literals (dict[str, int]): dict with all valued constant literals tokens
         opaque_constants (dict[str, int]): dict with all opaque constants tokens
         opaque_constant_literals (dict[str, int]): dict with all opaque constant literals tokens
@@ -759,7 +713,6 @@ def resolve_constant(
                 return block_nr
     return (
         renamed_value_constants.get(s, [None])[0]
-        or renamed_value_constants_negative.get(s, [None])[0]
         or value_constant_literals.get(s, [None])[0]
         or opaque_constants.get(s, [None])[0]
         or opaque_constant_literals.get(s, [None])[0]
