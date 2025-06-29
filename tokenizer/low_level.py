@@ -2,11 +2,10 @@ import angr
 import re
 import csv, json
 from pathlib import Path
-from capstone import *
 from address_meta_data_lookup import AddressMetaDataLookup
 from compact_base64_utils import ndarray_to_base64
 from utils import register_name_range, register_value_in_dict
-from typing import Union
+from typing import Union, Optional
 
 """
 Blöcke 0 bis 16:
@@ -72,17 +71,17 @@ def fill_constant_candidates(
     lookup: AddressMetaDataLookup,
     text_start: int,
     text_end: int
-) -> tuple[
-    dict[str, int] | None,
-    dict[str, int] | None,
-    dict[str, int] | None,
-    dict[str, int] | None,
-    list[dict[str, Union[str, list[str]]]] | None,
-    list[dict] | None,
-    dict[str, str] | None,
-    dict[str, str] | None,
-    dict[str, str] | None
-]:
+) -> Optional[tuple[
+    dict[str, int],
+    dict[str, int],
+    dict[str, int],
+    dict[str, int],
+    list[dict[str, list[list[Union[str, list[str]]]]]],
+    list[dict],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str]
+]]:
     """
     Assigns all operands for a given function to datastructures that are used to determine the token type.
     
@@ -101,24 +100,39 @@ def fill_constant_candidates(
 
     func_min_addr: int = int(func_addr)
     func_max_addr: int = 0
-    block_list: list[dict[str, tuple[str, str]]] = []
+    
 
     if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
-        return (None, None, None, None, None, None, None, None, None)
+        return None
 
-    temp_bbs: list[dict[str, Union[str, list[str]]]] = []
-    disassembly_list: list[Union[str, list[str]]] = []
-
-    block_dict: dict[str, str] = {}  # hex value of Block address: block_name
+    
+    disassembly_list: list[list[Union[str, list[str]]]] = []
     blocks: set = set()
-
-    mnemonics: dict[str, str] = {}
-    symbol_tokens: dict[str, str] = {}
 
     value_constants: dict[str, int] = {}
     value_constants_negative: dict[str, int] = {}
     value_constant_literals_candidates: dict[str, int] = {}
     opaque_candidates: dict[str, int] = {}
+
+    temp_bbs:   list[dict[str, list[list[Union[str, list[str]]]]]] = []
+    block_list: list[dict[str, tuple[str, str]]] = []
+
+    mnemonics: dict[str, str] = {}
+    symbol_tokens: dict[str, str] = {}
+
+    block_dict: dict[str, str] = {}  # hex value of Block address: block_name
+
+    """
+    value_constants,
+    value_constants_negative,
+    value_constant_literals_candidates,
+    opaque_candidates,
+    temp_bbs,
+    block_list,
+    mnemonics, 
+    symbol_tokens,
+    block_dict
+    """
 
     block_counter: int = 0
     for block in func.blocks:
@@ -345,7 +359,7 @@ def fill_constant_candidates(
     )
 
 
-def lowlevel_disas(path, cfg, constant_list) -> dict:
+def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, list[list[str | list[str]]]]]], dict[str, list[dict[str, list[str]]]], dict[str, list[str]]]:
     """
     Operand types: (in theory)
     0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
@@ -380,7 +394,7 @@ def lowlevel_disas(path, cfg, constant_list) -> dict:
     func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = (
         {}
     )  # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
-    func_disas: dict[str, list[dict[str, list[str]]]] = {}
+    func_disas: dict[str, list[dict[str, list[list[Union[str, list[str]]]]]]] = {}
 
     data = {}
     with open("tokenizer/data_store.json") as f:
@@ -406,7 +420,7 @@ def lowlevel_disas(path, cfg, constant_list) -> dict:
     # BINARY PARSER FOR CONSTANT LOOKUP
     lookup = AddressMetaDataLookup(path)
 
-    func_disas_token = {}
+    func_disas_token: dict[str, list[dict[str, list[str]]]] = {}
 
     max_functions = 0
     for func_addr, func in cfg.functions.items():
@@ -429,7 +443,7 @@ def lowlevel_disas(path, cfg, constant_list) -> dict:
             text_end=text_end
         )
 
-        if any(element is None for element in function_analysis):
+        if function_analysis is None:
             continue
 
         assert function_analysis[0] is not None
@@ -441,7 +455,7 @@ def lowlevel_disas(path, cfg, constant_list) -> dict:
         assert function_analysis[3] is not None
         opaque_candidates: dict[str, int] = function_analysis[3]
         assert function_analysis[4] is not None
-        temp_bbs: list[dict[str, str | list[str]]] = function_analysis[4]
+        temp_bbs: list[dict[str, list[list[Union[str, list[str]]]]]] = function_analysis[4]
         assert function_analysis[5] is not None
         block_list: list[dict[str, tuple[str, str]]] = function_analysis[5]
         assert function_analysis[6] is not None
@@ -527,9 +541,8 @@ def create_tokenstream(temp_bbs, renamed_value_constants,
             block_instrs = op_str
 
         for code_snippet in block_instrs:
-            token_stream: str = ""
             # Save tokenized instruction with prefixes passed in
-            token_stream: str = parse_instruction(
+            block_token_stream: str = parse_instruction(
                 code_snippet,
                 renamed_value_constants,
                 renamed_value_constants_negative,
@@ -540,7 +553,7 @@ def create_tokenstream(temp_bbs, renamed_value_constants,
                 symbol_tokens,
                 function_addr_range,
             )
-            token_list.append(token_stream)
+            token_list.append(block_token_stream)
         temp_tk.append({block_dict[block_code_addr]: token_list})
     return temp_tk
 
@@ -926,6 +939,9 @@ def main():
     # const_map = build_constant_map(project)
     # annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
+    disassembly: dict[str, list[dict[str, list[list[str | list[str]]]]]] = {}
+    disassembly_tokenized: dict[str, list[dict[str, list[str]]]] = {}
+    opaque_constants_meta: dict[str, list[str]]
     disassembly, disassembly_tokenized, opaque_constants_meta = lowlevel_disas(
         file_path, cfg, constants
     )
