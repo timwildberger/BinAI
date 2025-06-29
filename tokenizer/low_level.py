@@ -6,6 +6,7 @@ from address_meta_data_lookup import AddressMetaDataLookup
 from compact_base64_utils import ndarray_to_base64
 from utils import register_name_range, register_value_in_dict
 from typing import Union, Optional
+import numpy as np
 
 """
 Blöcke 0 bis 16:
@@ -285,8 +286,6 @@ def fill_constant_candidates(
                             else:
                                 value_constants[hex(scale)] = 1
 
-                        # print(f"Base: {op.mem.base}\nIndex: {op.mem.index}\nScale: {op.mem.scale}\nDisp: {op.mem.disp}")
-
                         if 0x00 <= disp <= 0xFF:
                             if hex(disp) in value_constants:
                                 value_constants[hex(disp)] += 1
@@ -301,7 +300,6 @@ def fill_constant_candidates(
                         else:
                             # For larger displacements, check if pointing to known constant or code or opaque
                             if hex(disp) in constant_dict:
-                                print(f"ITS A CONSTANT")
                                 value_constant_literals_candidates = (
                                     register_value_in_dict(
                                         value_constant_literals_candidates,
@@ -309,12 +307,10 @@ def fill_constant_candidates(
                                     )
                                 )
                             elif text_start <= disp < text_end:
-                                print(f"ITS IN THE TEXT")
                                 opaque_candidates = register_value_in_dict(
                                     opaque_candidates, hex(disp)
                                 )
                             elif disp < func_min_addr or disp > func_max_addr:
-                                print("ITS Non-Local")
                                 opaque_candidates = register_value_in_dict(
                                     opaque_candidates, hex(disp)
                                 )
@@ -327,7 +323,7 @@ def fill_constant_candidates(
                                 )
 
             else:
-                print(f"INSTRUCTION WITHOUT OEPRANDS: {insn}")
+                print(f"INSTRUCTION WITHOUT OPERANDS: {insn}")
                 raise TypeError
             # print((insn.mnemonic, insn.op_str))
             disasssembly_stream: list[str] = [
@@ -390,6 +386,8 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
     3: {type: Library function, name: close_file, library: libc}
     """
 
+    vocab: dict[str, int] = {}
+
     opaque_const_meta: dict[str, list[str]] = {}
     func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = (
         {}
@@ -422,13 +420,8 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
 
     func_disas_token: dict[str, list[dict[str, list[str]]]] = {}
 
-    max_functions = 0
     for func_addr, func in cfg.functions.items():
-        if max_functions == 161:
-            pass
-        print(f"{type(func_addr)}, {type(func)}")
         func_name = cfg.functions[func_addr].name
-        # print("\n"))
         function_analysis = fill_constant_candidates(
             func_name = func_name,
             func_addr=func_addr,
@@ -470,11 +463,8 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
             block_list, key=lambda d: list(d.values())[0][0]
         )
 
-
-
         # handle the constants dict
         # VALUE CONSTANTS 0x00 bis 0xFF
-        # sorted_value_constants = dict(sorted(value_constants.items(), key=lambda item: item[1], reverse=True))
         renamed_value_constants: dict[str, tuple[str, int]] = name_value_constants(
             value_constants
         )
@@ -500,7 +490,7 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
 
         # Name the constants
         value_constant_literals = name_value_constant_literals(
-            sorted_value_constant_literals, "VALUED_CONST_LIT"
+            value_constant_literals_candidates, "VALUED_CONST_LIT"
         )
 
         opaque_constants, opaque_constant_literals = name_opaque_constants(
@@ -513,13 +503,30 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
 
         
         temp_tk = create_tokenstream(temp_bbs=temp_bbs, renamed_value_constants=renamed_value_constants, renamed_value_constants_negative=renamed_value_constants_negative, value_constant_literals=value_constant_literals, opaque_constants=opaque_constants, opaque_constant_literals=opaque_constant_literals, mnemonics=mnemonics, symbol_tokens=symbol_tokens, function_addr_range=function_addr_range, block_dict=block_dict)
-        
+        vocab, tokenized_instructions, block_run_lengths, insn_run_lengths = build_vocab_tokenize_and_index(temp_tk, vocab)
+        #print(temp_tk)
+        #print(tokenized_instructions)
+        #print(len(tokenized_instructions))
+        #print(block_run_lengths)
+        #print(insn_run_lengths)
+
 
         func_disas[func_name] = temp_bbs
         func_disas_token[func_name] = temp_tk
-        max_functions += 1
+        
+    vocab = dict(sorted(vocab.items(), key=lambda item: item[1]))
+    for key, value in vocab.items():
+        print(f"{key}: {value}")
 
     return (func_disas, func_disas_token, opaque_const_meta)
+
+    # TODO Literal Tokens in Vocab: Block_Start Block_Lit_8 Block_Lit_7 Block_Lit_C Block_End: 2990
+    # --> Block_Start: 35
+    # --> Block_Lit_7: 46
+    # --> Block_Lit_C: 49
+    # --> Block_End: 172
+
+
 
 
 def create_tokenstream(temp_bbs, renamed_value_constants,
@@ -531,6 +538,7 @@ def create_tokenstream(temp_bbs, renamed_value_constants,
                     symbol_tokens,
                     function_addr_range, block_dict) -> list[dict[str, list[str]]]:
     temp_tk: list[dict[str, list[str]]] = []
+    
     for block_code in temp_bbs:
         token_list: list[str] = []
         block_code_addr: str = ""
@@ -556,6 +564,61 @@ def create_tokenstream(temp_bbs, renamed_value_constants,
             token_list.append(block_token_stream)
         temp_tk.append({block_dict[block_code_addr]: token_list})
     return temp_tk
+
+
+def build_vocab_tokenize_and_index(
+    blocks: list[dict[str, list[str]]],
+    vocab: dict[str, int]
+) -> tuple[dict[str, int], list[int], list[int], list[int]]:
+    current_id = max(vocab.values(), default=-1) + 1
+
+    tokenized_instructions: list[int] = []
+
+    block_break_indices: list[int] = []
+    insn_break_indices: list[int] = []
+
+    token_count = 0  # Zähler für Token insgesamt
+    block_idx = 0    # Index des aktuellen Blocks
+    insn_idx = 0     # Index der aktuellen Instruktion innerhalb des Blocks
+
+    for block in blocks:
+        for block_name, instructions in block.items():
+            if len(block_name) > 7:
+                block_names = block_name.split(" ")
+                for block_name in block_names:
+                    if block_name not in vocab:
+                        vocab[block_name] = current_id
+                        current_id += 1
+            # Blocknamen zum Vokabular hinzufügen
+            if block_name not in vocab:
+                vocab[block_name] = current_id
+                current_id += 1
+            
+            # Alle Instruktionen im Block durchgehen
+            for instruction in instructions:
+                tokens = instruction.split()
+                for token in tokens:
+                    if token not in vocab:
+                        vocab[token] = current_id
+                        current_id += 1
+                    tokenized_instructions.append(vocab[token])
+                    token_count += 1
+                
+                # Letzter Token dieser Instruktion → Instruktionsindex speichern
+                insn_break_indices.append(token_count)
+                insn_idx += 1
+            
+            # Letzter Token dieses Blocks → Blockindex speichern
+            block_break_indices.append(token_count)
+            block_idx += 1
+
+    # Run-Length-Encoding: Differenzen der Break-Indices (inkl. 0 vorne)
+    block_run_lengths = np.diff(np.concatenate(([0], block_break_indices))).tolist()
+    insn_run_lengths = np.diff(np.concatenate(([0], insn_break_indices))).tolist()
+
+    return vocab, tokenized_instructions, block_run_lengths, insn_run_lengths
+
+
 
 
 def parse_instruction(
@@ -690,11 +753,11 @@ def resolve_constant(
 
     Args:
         s (str): The element of the disassembly stream that is to be converted to a token
-        renamed_value_constants (dict[str, tuple[str, int]]): Dict with all positive value constant tokens
-        renamed_value_constants_negative (dict[str, tuple[str, int]]): Dict with all negative value constant tokens
-        value_constant_literals (dict[str, int]): Dict with all valued constant literals tokens
-        opaque_constants (dict[str, int]): Dict with all opaque constants tokens
-        opaque_constant_literals (dict[str, int]): Dict with all opaque constant literals tokens
+        renamed_value_constants (dict[str, tuple[str, int]]): dict with all positive value constant tokens
+        renamed_value_constants_negative (dict[str, tuple[str, int]]): dict with all negative value constant tokens
+        value_constant_literals (dict[str, int]): dict with all valued constant literals tokens
+        opaque_constants (dict[str, int]): dict with all opaque constants tokens
+        opaque_constant_literals (dict[str, int]): dict with all opaque constant literals tokens
 
     Returns:
         token (str)
@@ -713,26 +776,6 @@ def resolve_constant(
     )
 
 
-def get_memory_op_type(size: int) -> str:
-    if size == 1:
-        return "byte ptr"
-    elif size == 2:
-        return "word ptr"
-    elif size == 4:
-        return "dword ptr"
-    elif size == 8:
-        return "qword ptr"
-    elif size == 16:
-        return "xmmword ptr"
-    elif size == 32:
-        return "ymmword ptr"
-    elif size == 64:
-        return "zmmword ptr"
-    elif size == 8192:
-        return "tmmword ptr"
-    else:
-        raise ValueError
-
 
 def name_opaque_constants(
     occ: dict, base_name: str
@@ -744,7 +787,7 @@ def name_opaque_constants(
         occ (dict[address, occurence])
 
     Returns:
-        Tuple(dict[const_name: tuple(address, occurence)], dict[const_name: tuple(address, occurence)])
+        tuple(dict[const_name: tuple(address, occurence)], dict[const_name: tuple(address, occurence)])
     """
     counter = 0
     opaque_constants = {}
@@ -774,14 +817,18 @@ def name_value_constant_literals(
     """
     renamed_dict = {}
     counter = 0
-    for addr, freq in vcl.items():
-        if counter <= 255:
+    """for addr, freq in vcl.items():
+        if counter <= 16:
             new_name = f"VALUED_CONST_LIT_{hex(counter)[2:].upper()}"
             renamed_dict[addr] = (new_name, freq)
         else:
             new_name = register_name_range(counter, base_name)
             renamed_dict[addr] = (new_name, freq)
         counter += 1
+    return renamed_dict"""
+    for addr, freq in vcl.items():
+        new_name = register_name_range(int(addr[2:], 16), base_name)
+        renamed_dict[addr] = (new_name, freq)
     return renamed_dict
 
 
@@ -869,7 +916,7 @@ def parse_init_sections(
         sections_to_parse (list[str], optional): Section names to parse. Defaults to init/fini types.
 
     Returns:
-        list[dict]: List of parsed section entries.
+        list[dict]: list of parsed section entries.
     """
     if sections_to_parse is None:
         sections_to_parse = [".init", ".fini", ".init_array", ".fini_array"]

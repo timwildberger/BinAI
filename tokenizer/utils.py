@@ -1,19 +1,19 @@
-def register_name_range(id: int, basename) -> str:
+def register_name_range(id: int, basename: str) -> str:
     """
     Creates tokens for blocks.
     Block number < 16: Block0 - BlockF
-    Block number > 16: BlockLitStart BlockLit1 BlockLit0 BlockLitEnd
+    Block number > 16: Block_Lit_Start Block_Lit_1 Block_Lit_0 Block_Lit_End
     """
 
     """
     Creates tokens for block indexes.
-    Block number < 255: Block00 -  BlockFF
+    Block number < 255: Block0 -  BlockF
     Block number > 255: BlockLitStart BlockLit{HEX VALUE} BlockLit{HEX VALUE} BlockLitEnd"""
-    if id < 255:
+    if id < 16:
         name = f"{basename}_{str(hex(id)[2:]).upper()}"
     else:
         id_str = hex(id)[2:].upper()
-        chunks = [id_str[i : i + 2] for i in range(0, len(id_str), 2)]
+        chunks = [id_str[i] for i in range(0, len(id_str), 2)]
         name = f"{basename}_Start"
         for element in chunks:
             name += f" {basename}_{element}"
