@@ -1,9 +1,12 @@
 import angr
 import re
-import csv
+import csv, json
 from pathlib import Path
 from capstone import *
 from address_meta_data_lookup import AddressMetaDataLookup
+from compact_base64_utils import ndarray_to_base64
+from utils import register_name_range, register_value_in_dict
+from typing import Union
 
 """
 Blöcke 0 bis 16:
@@ -28,88 +31,6 @@ Konstanten:
 3. OpaqueConstants (16 uniqe - they represent an opaque value basically: e.g. the representation of the string "HelloWorld")
 4. OpaqueConstantLiterals (if a function needs more than 16 Opaque Literals)
 """
-
-
-def extract_constants_from_section(proj, section):
-    """
-    Extracts constants from a section, classifying them as:
-    - ValueConstant (single bytes)
-    - ValueConstantLiteral (multi-byte integers <= 128 bits)
-    - OpaqueConstant (printable strings or unique blobs)
-
-    Returns a dict: address -> (type_str, value)
-    """
-    data = proj.loader.memory.load(section.vaddr, section.memsize)
-    base = section.vaddr
-    const_map = {}
-    print(f"DATA: {data}")
-
-    # 1. Extract printable ASCII strings as OpaqueConstants
-    for match in re.finditer(rb"[ -~]{4,}", data):  # printable ASCII >=4 chars
-        addr = base + match.start()
-        s = match.group().decode("utf-8", errors="ignore")
-        const_map[addr] = ("OpaqueConstant", s)
-
-    # 2. Extract single byte ValueConstants (0x00 to 0xFF)
-    for offset in range(len(data)):
-        addr = base + offset
-        b = data[offset]
-        if addr not in const_map:
-            const_map[addr] = ("ValueConstant", b)
-
-    # 3. Extract multi-byte ValueConstantLiterals for aligned chunks (up to 16 bytes)
-    # We'll do a simple heuristic: if a 4/8/16-byte int is zero-padded and not string, override
-    # (This is a simplified heuristic; you may want to improve it)
-    sizes = [16, 8, 4]
-    for size in sizes:
-        for offset in range(len(data) - size + 1):
-            addr = base + offset
-            chunk = data[offset : offset + size]
-            # Skip if any byte in chunk overlaps existing OpaqueConstant
-            if any(
-                (addr + i) in const_map and const_map[addr + i][0] == "OpaqueConstant"
-                for i in range(size)
-            ):
-                continue
-            # Interpret as int
-            val = int.from_bytes(chunk, "little")
-            # Only keep if not zero and not single byte already stored
-            if val != 0 and all(
-                (addr + i) not in const_map
-                or const_map[addr + i][0] != "ValueConstantLiteral"
-                for i in range(size)
-            ):
-                for i in range(size):
-                    const_map[addr + i] = ("ValueConstantLiteral", val)
-    return const_map
-
-
-def build_constant_map(proj):
-    obj = proj.loader.main_object
-    combined_map = {}
-    for section in obj.sections:
-        if section.name in [".rodata", ".data", ".data.rel.ro"]:
-            const_map = extract_constants_from_section(proj, section)
-            combined_map.update(const_map)
-    print(combined_map)
-    return combined_map
-
-
-def classify_operand_value(value, section_ranges, known_constant_addrs):
-    for section_name, start, end in section_ranges:
-        if start <= value < end:
-            # Looks like an address into a memory section
-            if value in known_constant_addrs:
-                return ("KnownMemoryConstant", known_constant_addrs[value])
-            else:
-                return ("MemoryAddress", f"in {section_name} at 0x{value:x}")
-    # Not in any known memory-mapped section
-    if 0x00 <= value <= 0xFF:
-        return ("ValueConstant", value)
-    elif value.bit_length() <= 128:
-        return ("ValueConstantLiteral", value)
-    else:
-        return ("UnknownConstant", value)
 
 
 def extract_ldis_blocks_from_file(file_path):
@@ -139,35 +60,289 @@ def extract_ldis_blocks_from_file(file_path):
     return result
 
 
-def register_name_range(id: int, basename) -> str:
+def fill_constant_candidates(
+    func_name: str,
+    func_addr: int,
+    func: angr.knowledge_plugins.functions.function.Function,
+    arithmetic_instructions: set,
+    addressing_control_flow_instructions: set,
+    inv_prefix_tokens: dict[str, str],
+    constant_dict: dict[str, list[str]],
+    opaque_const_meta: dict[str, list[str]],
+    lookup: AddressMetaDataLookup,
+    text_start: int,
+    text_end: int
+) -> tuple[
+    dict[str, int] | None,
+    dict[str, int] | None,
+    dict[str, int] | None,
+    dict[str, int] | None,
+    list[dict[str, Union[str, list[str]]]] | None,
+    list[dict] | None,
+    dict[str, str] | None,
+    dict[str, str] | None,
+    dict[str, str] | None
+]:
     """
-    Creates tokens for blocks.
-    Block number < 16: Block0 - BlockF
-    Block number > 16: BlockLitStart BlockLit1 BlockLit0 BlockLitEnd
-    """
+    Assigns all operands for a given function to datastructures that are used to determine the token type.
+    
+    Args:
+        func_name (str): Name of the function
+        func_addr (int): Integer value of the function's start address
+        func (angr.knowledge_plugins.functions.function.Function): angr function object to be analyzed
+        arithmetic_instructions (set): Set of all arithmetic instruction. Used to indicate non-opaque constants.
+        addressing_control_flow_instructions (set): Set of all instruction that indicate memory operations or controlflow. Used to indicate opaque constants.
+        inv_prefix_tokens (dict[str, str]): Maps the hex value of all possible decorators to their intended meaning.
+        constant_dict (dict[str, list[str]]): Stores all constants from .rodata
+        opaque_const_meta (dict[str, list[str]]): Stores all available metadata for any opaque value.
+        lookup (AddressMetaDataLookup): lookupObject to quickly parse function libraries to populate opaque_const_meta
+        text_start (int): Start address of the .text section
+        text_end (int): End address of the .text section"""
 
-    """
-    Creates tokens for block indexes.
-    Block number < 255: Block00 -  BlockFF
-    Block number > 255: BlockLitStart BlockLit{HEX VALUE} BlockLit{HEX VALUE} BlockLitEnd"""
-    if id < 255:
-        name = f"{basename}_{str(hex(id)[2:]).upper()}"
-    else:
-        id_str = hex(id)[2:].upper()
-        chunks = [id_str[i : i + 2] for i in range(0, len(id_str), 2)]
-        name = f"{basename}_Start"
-        for element in chunks:
-            name += f" {basename}_{element}"
-        name += f" {basename}_End"
-    return name
+    func_min_addr: int = int(func_addr)
+    func_max_addr: int = 0
+    block_list: list[dict[str, tuple[str, str]]] = []
 
+    if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
+        return (None, None, None, None, None, None, None, None, None)
 
-def register_value_in_dict(dict: dict, value: str) -> dict:
-    if value not in dict:
-        dict[value] = 1
-    else:
-        dict[value] += 1
-    return dict
+    temp_bbs: list[dict[str, Union[str, list[str]]]] = []
+    disassembly_list: list[Union[str, list[str]]] = []
+
+    block_dict: dict[str, str] = {}  # hex value of Block address: block_name
+    blocks: set = set()
+
+    mnemonics: dict[str, str] = {}
+    symbol_tokens: dict[str, str] = {}
+
+    value_constants: dict[str, int] = {}
+    value_constants_negative: dict[str, int] = {}
+    value_constant_literals_candidates: dict[str, int] = {}
+    opaque_candidates: dict[str, int] = {}
+
+    block_counter: int = 0
+    for block in func.blocks:
+        func_max_addr = max(func_min_addr, block.addr + block.size)
+        block_name = register_name_range(block_counter, basename="Block")
+        block_list.append(
+            {
+                block_name: (
+                    hex(func_min_addr),
+                    hex(func_max_addr),
+                )
+            }
+        )
+        blocks.add(hex(block.addr))
+
+        if block.capstone.insns is None:
+            print("KAPUTT")
+        block_addr = hex(block.addr)
+        block_dict[block_addr] = block_name
+
+        disassembly_list = []
+
+        # Single loop over instructions to get both disassembly and immediates
+        for insn in block.capstone.insns:
+            # Extract non-zero prefixes (up to 4 bytes)
+            prefix_bytes = [f"0x{b:02X}" for b in insn.prefix if b != 0]
+            # print(f"prefix bytes: {prefix_bytes}")
+
+            # Register prefix tokens
+            for byte in prefix_bytes:
+                if byte in inv_prefix_tokens:
+                    prefix_name: str = inv_prefix_tokens[byte]
+                    if prefix_name not in mnemonics:
+                        mnemonics[prefix_name] = mnemonic_to_token(prefix_name)
+                    symbol_tokens[prefix_name] = mnemonics[prefix_name]
+
+            insn_list = []
+
+            if hasattr(insn, "operands"):
+                # print("\n")
+                # go through all operands
+                for op in insn.operands:
+                    insn_list.append(op.type)
+                    if op.type == 0 or op.type > 3:
+                        raise Exception
+                    if op.type == 1:  # REGISTER
+                        symbol_tokens[insn.reg_name(op.reg)] = mnemonic_to_token(
+                            insn.reg_name(op.reg)
+                        )
+                    elif op.type == 2:  # IMMEDIATE
+                        imm_val = op.imm
+                        # V1
+                        """
+                        if 0x00 <= imm_val <= 0xFF:
+                            if hex(imm_val) in value_constants:
+                                value_constants[hex(imm_val)] += 1
+                            else:
+                                value_constants[hex(imm_val)] = 1
+                        elif -0x80 <= imm_val <= -0x01:
+                            if hex(imm_val) in value_constants_negative:
+                                value_constants_negative[hex(imm_val)] += 1
+                            else:
+                                value_constants[hex(imm_val)] = 1
+                        """
+                        imm_val = abs(imm_val)
+                        if 0x00 <= imm_val <= 0xFF:
+                            if hex(imm_val) in value_constants:
+                                value_constants[hex(imm_val)] += 1
+                            else:
+                                value_constants[hex(imm_val)] = 1
+                        elif (
+                            0x100 <= imm_val <= (2**128 - 1)
+                            or (-(2**127)) <= imm_val <= -0x100
+                        ):
+                            if hex(imm_val) in constant_dict.keys():  # is it a constant
+                                value_constant_literals_candidates = (
+                                    register_value_in_dict(
+                                        value_constant_literals_candidates,
+                                        hex(imm_val),
+                                    )
+                                )
+                            else:  # Not a known constant
+                                if insn.mnemonic in arithmetic_instructions:
+                                    value_constant_literals_candidates = (
+                                        register_value_in_dict(
+                                            value_constant_literals_candidates,
+                                            hex(imm_val),
+                                        )
+                                    )
+                                elif (
+                                    insn.mnemonic
+                                    in addressing_control_flow_instructions
+                                ):
+                                    meta, kind = lookup.lookup(imm_val)
+                                    if meta is not None:
+                                        if kind == "range":
+                                            if (
+                                                func_min_addr <= imm_val < func_max_addr
+                                            ):  # Local
+                                                value_constant_literals_candidates = register_value_in_dict(
+                                                    value_constant_literals_candidates,
+                                                    hex(imm_val),
+                                                )
+                                            else:
+                                                if (
+                                                    meta["name"]
+                                                    not in opaque_const_meta
+                                                ):
+                                                    opaque_const_meta[meta["name"]] = [
+                                                        hex(meta["start_addr"]),
+                                                        hex(meta["end_addr"]),
+                                                        meta["type"],
+                                                        meta.get("library", "unknown"),
+                                                    ]
+                                                    # opaque_const_meta[hex(imm_val)] = [f"{k}={v}" for k, v in meta.items()]
+                                                opaque_candidates = (
+                                                    register_value_in_dict(
+                                                        opaque_candidates,
+                                                        hex(imm_val),
+                                                    )
+                                                )
+                                        else:
+                                            if meta["name"] not in opaque_const_meta:
+                                                opaque_const_meta[meta["name"]] = [
+                                                    hex(meta["start_addr"]),
+                                                    hex(meta["end_addr"]),
+                                                    meta["type"],
+                                                ]
+                                            opaque_candidates = register_value_in_dict(
+                                                opaque_candidates, hex(imm_val)
+                                            )
+                                    else:
+                                        value_constant_literals_candidates = register_value_in_dict(
+                                            value_constant_literals_candidates,
+                                            hex(imm_val),
+                                        )
+                                else:  # Fallback
+                                    opaque_candidates = register_value_in_dict(
+                                        opaque_candidates, hex(imm_val)
+                                    )
+
+                    elif op.type == 3:  # MEMORY
+                        disp = abs(op.mem.disp)
+                        scale = op.mem.scale
+
+                        # Register the scale as a constant if in expected range
+                        if 0x00 <= scale <= 0xFF:
+                            if hex(scale) in value_constants:
+                                value_constants[hex(scale)] += 1
+                            else:
+                                value_constants[hex(scale)] = 1
+
+                        # print(f"Base: {op.mem.base}\nIndex: {op.mem.index}\nScale: {op.mem.scale}\nDisp: {op.mem.disp}")
+
+                        if 0x00 <= disp <= 0xFF:
+                            if hex(disp) in value_constants:
+                                value_constants[hex(disp)] += 1
+                            else:
+                                value_constants[hex(disp)] = 1
+                        elif -0x80 <= disp <= -0x01:
+                            if hex(disp) in value_constants_negative:
+                                value_constants_negative[hex(disp)] += 1
+                            else:
+                                value_constants[hex(disp)] = 1
+                            raise ValueError
+                        else:
+                            # For larger displacements, check if pointing to known constant or code or opaque
+                            if hex(disp) in constant_dict:
+                                print(f"ITS A CONSTANT")
+                                value_constant_literals_candidates = (
+                                    register_value_in_dict(
+                                        value_constant_literals_candidates,
+                                        hex(disp),
+                                    )
+                                )
+                            elif text_start <= disp < text_end:
+                                print(f"ITS IN THE TEXT")
+                                opaque_candidates = register_value_in_dict(
+                                    opaque_candidates, hex(disp)
+                                )
+                            elif disp < func_min_addr or disp > func_max_addr:
+                                print("ITS Non-Local")
+                                opaque_candidates = register_value_in_dict(
+                                    opaque_candidates, hex(disp)
+                                )
+                            else:
+                                value_constant_literals_candidates = (
+                                    register_value_in_dict(
+                                        value_constant_literals_candidates,
+                                        hex(disp),
+                                    )
+                                )
+
+            else:
+                print(f"INSTRUCTION WITHOUT OEPRANDS: {insn}")
+                raise TypeError
+            # print((insn.mnemonic, insn.op_str))
+            disasssembly_stream: list[str] = [
+                inv_prefix_tokens[f"0x{b:02X}"]
+                for b in insn.prefix
+                if b != 0 and f"0x{b:02X}" in inv_prefix_tokens
+            ]
+            disassembly_list.append([insn.mnemonic, insn.op_str, disasssembly_stream])
+
+            # Use only the mnemonic itself, without prefixes
+            mnemonic = insn.mnemonic.strip()
+
+            # Register the base mnemonic token if not already done
+            if mnemonic not in mnemonics:
+                mnemonics[mnemonic] = mnemonic_to_token(mnemonic)
+
+        temp_bbs.append({block_addr: disassembly_list})
+        block_counter += 1
+    return (
+        value_constants,
+        value_constants_negative,
+        value_constant_literals_candidates,
+        opaque_candidates,
+        temp_bbs,
+        block_list,
+        mnemonics, 
+        symbol_tokens,
+        block_dict
+    )
 
 
 def lowlevel_disas(path, cfg, constant_list) -> dict:
@@ -202,89 +377,19 @@ def lowlevel_disas(path, cfg, constant_list) -> dict:
     """
 
     opaque_const_meta: dict[str, list[str]] = {}
-
     func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = (
         {}
     )  # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
-    func_disas: dict[str, str] = {}
-    func_disas_token = {}
-    inv_prefix_tokens = {
-        "0xF0": "x86_lock",
-        "0xF2": "x86_repne",  # note: both x86_repne and x86_repnz use 0xF2
-        "0xF3": "x86_rep",  # note: both x86_rep and x86_repz use 0xF3
-        "0x26": "x86_es:",
-        "0x2E": "x86_cs:",
-        "0x36": "x86_ss:",
-        "0x3E": "x86_ds:",
-        "0x64": "x86_fs:",
-        "0x65": "x86_gs:",
-        "0x66": "x86_operand_size_override",
-        "0x67": "x86_address-size_override",
-    }
+    func_disas: dict[str, list[dict[str, list[str]]]] = {}
 
-    arithmetic_instructions = {
-        "add",
-        "sub",
-        "mul",
-        "imul",
-        "div",
-        "idiv",
-        "inc",
-        "dec",
-        "and",
-        "or",
-        "xor",
-        "not",
-        "neg",
-        "shl",
-        "shr",
-        "sar",
-        "sal",
-        "rol",
-        "ror",
-        "cmp",
-        "test",
-        "adc",
-        "sbb",
-        "lea",
-    }
-
-    addressing_control_flow_instructions = {
-        "jmp",
-        "call",
-        "je",
-        "jz",
-        "jne",
-        "jnz",
-        "jg",
-        "js",
-        "jnle",
-        "jge",
-        "jnl",
-        "jns",
-        "jl",
-        "jnge",
-        "jle",
-        "jng",
-        "ja",
-        "jnbe",
-        "jae",
-        "jnb",
-        "jb",
-        "jnae",
-        "jbe",
-        "jna",
-        "loop",
-        "loope",
-        "loopne",
-        "mov",
-        "lea",
-        "push",
-        "pop",
-        "cmp",
-        "test",
-        "int",
-    }
+    data = {}
+    with open("tokenizer/data_store.json") as f:
+        data = json.load(f)
+    arithmetic_instructions: set = set(data["arithmetic_instructions"])
+    addressing_control_flow_instructions: set = set(
+        data["addressing_control_flow_instructions"]
+    )
+    inv_prefix_tokens: dict[str, str] = data["inv_prefix_tokens"]
 
     # Get .text section size
     project = angr.Project(path, auto_load_libs=False)
@@ -298,329 +403,60 @@ def lowlevel_disas(path, cfg, constant_list) -> dict:
             text_size = section.memsize  # Größe in Bytes
             text_end = text_start + text_size
 
-    blocks = set()
-
     # BINARY PARSER FOR CONSTANT LOOKUP
-    lookup = AddressMetaDataLookup(project, cfg)
+    lookup = AddressMetaDataLookup(path)
 
+    func_disas_token = {}
+
+    max_functions = 0
     for func_addr, func in cfg.functions.items():
-        # print("\n"))
+        if max_functions == 161:
+            pass
+        print(f"{type(func_addr)}, {type(func)}")
         func_name = cfg.functions[func_addr].name
+        # print("\n"))
+        function_analysis = fill_constant_candidates(
+            func_name = func_name,
+            func_addr=func_addr,
+            func=func,
+            arithmetic_instructions=arithmetic_instructions,
+            addressing_control_flow_instructions=addressing_control_flow_instructions,
+            inv_prefix_tokens=inv_prefix_tokens,
+            constant_dict=constant_list,
+            opaque_const_meta=opaque_const_meta,
+            lookup=lookup,
+            text_start=text_start,
+            text_end=text_end
+        )
 
-        func_min_addr: int = int(func_addr)
-        func_max_addr: int = 0
-        block_list = []
-
-        if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
+        if any(element is None for element in function_analysis):
             continue
 
-        temp_bbs: list[dict[str, list[str]]] = []
-        temp_tk: list[dict[str, list[str]]] = []
-        disassembly_list: list[str] = []
-        token_list: list[str] = []
+        assert function_analysis[0] is not None
+        value_constants: dict[str, int] = function_analysis[0]
+        assert function_analysis[1] is not None
+        value_constants_negative: dict[str, int] = function_analysis[1]
+        assert function_analysis[2] is not None
+        value_constant_literals_candidates: dict[str, int] = function_analysis[2]
+        assert function_analysis[3] is not None
+        opaque_candidates: dict[str, int] = function_analysis[3]
+        assert function_analysis[4] is not None
+        temp_bbs: list[dict[str, str | list[str]]] = function_analysis[4]
+        assert function_analysis[5] is not None
+        block_list: list[dict[str, tuple[str, str]]] = function_analysis[5]
+        assert function_analysis[6] is not None
+        mnemonics: dict[str, str] = function_analysis[6]
+        assert function_analysis[7] is not None
+        symbol_tokens: dict[str, str] = function_analysis[7]
+        assert function_analysis[8] is not None
+        block_dict: dict[str, str] = function_analysis[8]
 
-        block_dict: dict[str, str] = {}  # hex value of Block address: block_name
-        mnemonics = {}
-        symbol_tokens = {}
 
-        value_constants: dict[str, int] = {}
-        value_constants_negative: dict[str, int] = {}
-        value_constant_literals_candidates: dict[str, int] = {}
+        func_addr_range[func_addr] = sorted(
+            block_list, key=lambda d: list(d.values())[0][0]
+        )
 
-        opaque_candidates: dict[str, int] = {}
 
-        block_counter = 0
-        for block in func.blocks:
-            
-            func_max_addr = max(func_min_addr, block.addr + block.size)
-            block_name = register_name_range(block_counter, basename="Block")
-            block_list.append(
-                {
-                    block_name: (
-                        hex(func_min_addr),
-                        hex(func_max_addr),
-                    )
-                }
-            )
-            blocks.add(hex(block.addr))
-
-            if block.capstone.insns is None:
-                print("KAPUTT")
-            block_addr = hex(block.addr)
-            block_dict[block_addr] = block_name
-
-            disassembly_list = []
-
-            # Single loop over instructions to get both disassembly and immediates
-            for insn in block.capstone.insns:
-                # Extract non-zero prefixes (up to 4 bytes)
-                prefix_bytes = [f"0x{b:02X}" for b in insn.prefix if b != 0]
-                # print(f"prefix bytes: {prefix_bytes}")
-
-                # Register prefix tokens
-                for byte in prefix_bytes:
-                    if byte in inv_prefix_tokens:
-                        prefix_name = inv_prefix_tokens[byte]
-                        if prefix_name not in mnemonics:
-                            mnemonics[prefix_name] = mnemonic_to_token(prefix_name)
-                        symbol_tokens[prefix_name] = mnemonics[prefix_name]
-
-                insn_list = []
-
-                if hasattr(insn, "operands"):
-                    # print("\n")
-                    # go through all operands
-                    for op in insn.operands:
-                        insn_list.append(op.type)
-                        if op.type == 0 or op.type > 3:
-                            raise Exception
-                        if op.type == 1:  # REGISTER
-                            symbol_tokens[insn.reg_name(op.reg)] = mnemonic_to_token(
-                                insn.reg_name(op.reg)
-                            )
-                        elif op.type == 2:  # IMMEDIATE
-                            imm_val = op.imm
-
-                            if 0x00 <= imm_val <= 0xFF:
-                                if hex(imm_val) in value_constants:
-                                    value_constants[hex(imm_val)] += 1
-                                else:
-                                    value_constants[hex(imm_val)] = 1
-                            elif -0x80 <= imm_val <= -0x01:
-                                if hex(imm_val) in value_constants_negative:
-                                    value_constants_negative[hex(imm_val)] += 1
-                                else:
-                                    value_constants[hex(imm_val)] = 1
-                            elif (
-                                0x100 <= imm_val <= (2**128 - 1)
-                                or (-(2**127)) <= imm_val <= -0x100
-                            ):
-                                # V1
-                                """metadata = parser.get_metadata(imm_val)
-                                if metadata:
-                                    print(f"Metadata for address {hex(imm_val)}: {metadata}")
-                                else:
-                                    print(f"No metadata found for address {hex(imm_val)}.")
-                                if hex(imm_val) in constant_list.keys(): # is it a constant
-                                    #print("ITS A CONSTANT")
-                                    if hex(imm_val) in value_constant_literals_candidates:
-                                        value_constant_literals_candidates[hex(imm_val)] += 1
-                                    else:
-                                        value_constant_literals_candidates[hex(imm_val)] = 1
-
-                                if insn.mnemonic in arithmetic_instructions:
-                                    #print("\tITS ARITHMETIC")
-                                    if hex(imm_val) in value_constant_literals_candidates:
-                                        value_constant_literals_candidates[hex(imm_val)] += 1
-                                    else:
-                                        value_constant_literals_candidates[hex(imm_val)] = 1
-                                elif insn.mnemonic in addressing_control_flow_instructions:
-                                    if text_start <= imm_val < text_end:
-                                        print("\tITS IN TEXT")
-                                    else:
-                                        print("\tITS OUTSIDE OF TEXT")
-
-                                    if data_start <= imm_val < data_end:
-                                        print(f"\tITS IN DATA")
-                                    else:
-                                        print("\tITS OUTSIDE OF DATA")
-
-                                    if rodata_start <= imm_val < rodata_end:
-                                        print(f"\tITS IN RODATA")
-                                    else:
-                                        print("\tITS OUTSIDE OF RODATA")
-
-                                    if plt_start <= imm_val < plt_end:
-                                        print(f"\tITS IN PLT")
-                                    else:
-                                        print("\tITS OUTSIDE OF PLT")
-
-                                    if hex(imm_val) in plt_stub_data:
-                                        print(f"\tITS A STUB")
-                                    elif hex(imm_val) in init_section_data:
-                                        print(f"ITS AN INIT")
-
-                                    if init_start <= imm_val < init_end:
-                                        print(f"\tITS IN INIT")
-                                    else:
-                                        print("\tITS OUTSIDE OF INIT")
-
-                                    print("\tITS CONTROL FLOW)
-                                    if func_min_addr <= (imm_val) < func_max_addr:
-                                        #print("\t\tITS LOCAL")
-                                        if hex(imm_val) in value_constant_literals_candidates:
-                                            value_constant_literals_candidates[hex(imm_val)] += 1
-                                        else:
-                                            value_constant_literals_candidates[hex(imm_val)] = 1
-                                    else:
-                                        #print("\t\tITS NON LOCAL")
-                                        if hex(imm_val) in opaque_candidates:
-                                            opaque_candidates[hex(imm_val)] += 1
-                                        else:
-                                            opaque_candidates[hex(imm_val)] = 1
-                                else:
-                                    #print("ITS SOMETHING ELSE")
-                                    if hex(imm_val) in opaque_candidates:
-                                        opaque_candidates[hex(imm_val)] += 1
-                                    else:
-                                        opaque_candidates[hex(imm_val)] = 1"""
-
-                                # V2
-                                if (
-                                    hex(imm_val) in constant_list.keys()
-                                ):  # is it a constant
-                                    print(f"ITS A CONSTANT")
-                                    value_constant_literals_candidates = (
-                                        register_value_in_dict(
-                                            value_constant_literals_candidates,
-                                            hex(imm_val),
-                                        )
-                                    )
-                                    print(f"\t{constant_list[hex(imm_val)]}")
-                                else:  # Not a known constant
-                                    print(f"ITS NOT A KNOWN CONSTANT")
-                                
-                                    print(f"\tTHE LOOKUP FOUND SOMETHING")
-                                    if insn.mnemonic in arithmetic_instructions:
-                                        print(f"\t\tARITHMETIC")
-                                        value_constant_literals_candidates = (
-                                            register_value_in_dict(
-                                                value_constant_literals_candidates,
-                                                hex(imm_val),
-                                            )
-                                        )
-                                    elif (
-                                        insn.mnemonic
-                                        in addressing_control_flow_instructions
-                                    ):
-                                        print(f"\t\tCONTROL FLOW")
-                                        meta, kind = lookup.lookup(imm_val)
-                                        if meta is not None:
-                                            if kind == "range":
-                                                print(f"\t\t\tMUST BE A FUNCTION CALL")
-                                                if (
-                                                    func_min_addr
-                                                    <= imm_val
-                                                    < func_max_addr
-                                                ):  # Local
-                                                    print(f"\t\t\t\tLocal")
-                                                    value_constant_literals_candidates = register_value_in_dict(
-                                                        value_constant_literals_candidates,
-                                                        hex(imm_val),
-                                                    )
-                                                else:
-                                                    print("\t\t\t\tNon-local")  # Non-Local
-                                                    if (
-                                                        meta["name"]
-                                                        not in opaque_const_meta
-                                                    ):
-                                                        opaque_const_meta[
-                                                            meta["name"]
-                                                        ] = [
-                                                            hex(meta["start_addr"]),
-                                                            hex(meta["end_addr"]),
-                                                            meta["type"],
-                                                            meta["library"],
-                                                        ]
-                                                        # opaque_const_meta[hex(imm_val)] = [f"{k}={v}" for k, v in meta.items()]
-                                                    opaque_candidates = (
-                                                        register_value_in_dict(
-                                                            opaque_candidates,
-                                                            hex(imm_val),
-                                                        )
-                                                    )
-                                            else:
-                                                print("Unresolvable")
-                                                if (
-                                                    meta["name"]
-                                                    not in opaque_const_meta
-                                                ):
-                                                    opaque_const_meta[meta["name"]] = [
-                                                        hex(meta["start_addr"]),
-                                                        hex(meta["end_addr"]),
-                                                        meta["type"],
-                                                    ]
-                                                opaque_candidates = (
-                                                    register_value_in_dict(
-                                                        opaque_candidates, hex(imm_val)
-                                                    )
-                                                )
-                                    else:  # Fallback
-                                        print(f"FALLBACK")
-                                        opaque_candidates = register_value_in_dict(
-                                            opaque_candidates, hex(imm_val)
-                                        )
-
-                        elif op.type == 3:  # MEMORY
-                            disp = op.mem.disp
-                            disp = abs(disp)
-
-                            # print(f"Base: {op.mem.base}\nIndex: {op.mem.index}\nScale: {op.mem.scale}\nDisp: {op.mem.disp}")
-
-                            if 0x00 <= disp <= 0xFF:
-                                if hex(disp) in value_constants:
-                                    value_constants[hex(disp)] += 1
-                                else:
-                                    value_constants[hex(disp)] = 1
-                            elif -0x80 <= disp <= -0x01:
-                                if hex(disp) in value_constants_negative:
-                                    value_constants_negative[hex(disp)] += 1
-                                else:
-                                    value_constants[hex(disp)] = 1
-                                raise ValueError
-                            else:
-                                # For larger displacements, check if pointing to known constant or code or opaque
-                                if hex(disp) in constant_list:
-                                    print(f"ITS A CONSTANT")
-                                    value_constant_literals_candidates[hex(disp)] = (
-                                        value_constant_literals_candidates.get(
-                                            hex(disp), 0
-                                        )
-                                        + 1
-                                    )
-                                elif text_start <= disp < text_end:
-                                    print(f"ITS IN THE TEXT")
-                                    opaque_candidates[hex(disp)] = (
-                                        opaque_candidates.get(hex(disp), 0) + 1
-                                    )
-                                elif disp < func_min_addr or disp > func_max_addr:
-                                    print("ITS Non-Local")
-                                    opaque_candidates[hex(disp)] = (
-                                        opaque_candidates.get(hex(disp), 0) + 1
-                                    )
-                                else:
-                                    value_constant_literals_candidates[hex(disp)] = (
-                                        value_constant_literals_candidates.get(
-                                            hex(disp), 0
-                                        )
-                                        + 1
-                                    )
-
-                else:
-                    print(f"INSTRUCTION WITHOUT OEPRANDS: {insn}")
-                    raise TypeError
-                print((insn.mnemonic, insn.op_str))
-                disasssembly_stream: list[str] = [
-                    inv_prefix_tokens[f"0x{b:02X}"]
-                    for b in insn.prefix
-                    if b != 0 and f"0x{b:02X}" in inv_prefix_tokens
-                ]
-                disassembly_list.append(
-                    [insn.mnemonic, insn.op_str, disasssembly_stream]
-                )
-
-                # Use only the mnemonic itself, without prefixes
-                mnemonic = insn.mnemonic.strip()
-
-                # Register the base mnemonic token if not already done
-                if mnemonic not in mnemonics:
-                    mnemonics[mnemonic] = mnemonic_to_token(mnemonic)
-
-            temp_bbs.append({block_addr: disassembly_list})
-            block_counter += 1
-
-        block_list = sorted(block_list, key=lambda d: list(d.values())[0][0])
-        func_addr_range[func_addr] = block_list
 
         # handle the constants dict
         # VALUE CONSTANTS 0x00 bis 0xFF
@@ -647,13 +483,6 @@ def lowlevel_disas(path, cfg, constant_list) -> dict:
         sorted_opaque_candidates = dict(
             sorted(opaque_candidates.items(), key=lambda item: item[1], reverse=True)
         )
-        """
-            Opaque Const Metadaten:
-            0: {type: Local function, name: fibonacci}  
-            1: {type: String, value: "Hello World I love u"}
-            2: {type: Library function, name: read_file, library: libc}
-            3: {type: Library function, name: close_file, library: libc}
-        """
 
         # Name the constants
         value_constant_literals = name_value_constant_literals(
@@ -663,55 +492,57 @@ def lowlevel_disas(path, cfg, constant_list) -> dict:
         opaque_constants, opaque_constant_literals = name_opaque_constants(
             sorted_opaque_candidates, "OPAQUE_CONST_LIT"
         )
-
-        # print(f"OPAQUE CANDIDATES: {opaque_candidates}")
-        # print(f"VALUED CONSTANT LITERALS: {value_constant_literals}\nOPAQUE CONSTANTS & OPAQUE CONSTANT LITERALS: {opaque_constants}, {opaque_constant_literals}")
-
         # print(temp_bbs)
         function_addr_range: list[dict[str, tuple[str, str]]] = func_addr_range[
             func_addr
         ]
 
-        for block_code in temp_bbs:
-            # print(block_code)
-            token_list = []
-            block_addr: str
-            block_instrs: list[str]
-            # There is only one item --> traversal like this is fine
-            for addr, op_str in block_code.items():  # dict[str, list[str]]
-                block_addr = addr
-                block_instrs = op_str
+        
+        temp_tk = create_tokenstream(temp_bbs=temp_bbs, renamed_value_constants=renamed_value_constants, renamed_value_constants_negative=renamed_value_constants_negative, value_constant_literals=value_constant_literals, opaque_constants=opaque_constants, opaque_constant_literals=opaque_constant_literals, mnemonics=mnemonics, symbol_tokens=symbol_tokens, function_addr_range=function_addr_range, block_dict=block_dict)
+        
 
-            for code_snippet in block_instrs:
-                token_stream: str = ""
-                # print(type(code_snippet))
-                # mnemonic_token = mnemonics[code_snippet]
-                # print(f"CodeSnippet: {code_snippet}")
-                # Extract prefix names from instruction object for this instruction
-                # prefix_bytes = [f"0x{b:02X}" for b in insn.prefix if b != 0]
-                # prefix_names = [inv_prefix_tokens[b] for b in prefix_bytes if b in inv_prefix_tokens]
+        func_disas[func_name] = temp_bbs
+        func_disas_token[func_name] = temp_tk
+        max_functions += 1
 
-                # Save tokenized instruction with prefixes passed in
-                token_stream = parse_instruction(
-                    code_snippet,
-                    renamed_value_constants,
+    return (func_disas, func_disas_token, opaque_const_meta)
+
+
+def create_tokenstream(temp_bbs, renamed_value_constants,
                     renamed_value_constants_negative,
                     value_constant_literals,
                     opaque_constants,
                     opaque_constant_literals,
                     mnemonics,
                     symbol_tokens,
-                    function_addr_range,
-                )
-                # print(f"TOKEN STREAM: {token_stream}")
-                token_list.append(token_stream)
-                print(token_stream)
-            temp_tk.append({block_dict[block_addr]: token_list})
+                    function_addr_range, block_dict) -> list[dict[str, list[str]]]:
+    temp_tk: list[dict[str, list[str]]] = []
+    for block_code in temp_bbs:
+        token_list: list[str] = []
+        block_code_addr: str = ""
+        block_instrs: str | list[str]= []
+        # There is only one item --> traversal like this is fine
+        for addr, op_str in block_code.items():  # dict[str, list[str]]
+            block_code_addr = addr
+            block_instrs = op_str
 
-        func_disas[func_name] = temp_bbs
-        func_disas_token[func_name] = temp_tk
-        break
-    return (func_disas, func_disas_token, opaque_const_meta)
+        for code_snippet in block_instrs:
+            token_stream: str = ""
+            # Save tokenized instruction with prefixes passed in
+            token_stream: str = parse_instruction(
+                code_snippet,
+                renamed_value_constants,
+                renamed_value_constants_negative,
+                value_constant_literals,
+                opaque_constants,
+                opaque_constant_literals,
+                mnemonics,
+                symbol_tokens,
+                function_addr_range,
+            )
+            token_list.append(token_stream)
+        temp_tk.append({block_dict[block_code_addr]: token_list})
+    return temp_tk
 
 
 def parse_instruction(
@@ -865,7 +696,7 @@ def resolve_constant(
         or value_constant_literals.get(s, [None])[0]
         or opaque_constants.get(s, [None])[0]
         or opaque_constant_literals.get(s, [None])[0]
-        or "UNBEKNOWNST"
+        or f"UNBEKNOWNST: {s}"
     )
 
 
@@ -959,10 +790,9 @@ def name_value_constants(vc: dict) -> dict[str, tuple[str, int]]:
     return renamed_dict
 
 
-
 def parse_and_save_data_sections(
-    proj, sections_to_parse: list[str]=[".rodata"], output_txt="parsed_constants.txt"
-):
+    proj, sections_to_parse: list[str] = [".rodata"], output_txt="parsed_constants.txt"
+) -> dict[str, list[str]]:
     """
     Parses the .rodata (read-only data) section to retrieve a dict with all constants.
 
@@ -972,10 +802,10 @@ def parse_and_save_data_sections(
         output_txt (str): Name of the file for persistence
 
     Returns:
-        dict with all constants of structure: start_addr: [end_addr, section_name, value] 
+        dict with all constants of structure: start_addr: [end_addr, section_name, value]
     """
     all_entries = []
-    addr_dict = {}
+    addr_dict: dict[str, list[str]] = {}
 
     def parse_rodata(data, base_addr):
         entries = []
@@ -1006,11 +836,12 @@ def parse_and_save_data_sections(
     # Output only exact-address constants
     with open(output_txt, "w") as f:
         for e in all_entries:
-            f.write(f'{e["section"]}, {e["start"]} - {e["end"]}: {e["value"]}\n')
+            f.write(f'{e["start"]} - {e["end"]}: {e["section"]}: {e["value"]}\n')
 
-    print(f"Parsed {len(all_entries)} .rodata constants with exact addresses into {output_txt}")
+    print(
+        f"Parsed {len(all_entries)} .rodata constants with exact addresses into {output_txt}"
+    )
     return addr_dict
-
 
 
 def parse_init_sections(
@@ -1086,7 +917,7 @@ def main():
     # print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
 
     project = angr.Project(file_path, auto_load_libs=False)
-    constants = parse_and_save_data_sections(project)
+    constants: dict[str, list[str]] = parse_and_save_data_sections(project)
 
     # print(section_data)
 
@@ -1096,7 +927,8 @@ def main():
     # annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
     disassembly, disassembly_tokenized, opaque_constants_meta = lowlevel_disas(
-        file_path, cfg, constants)
+        file_path, cfg, constants
+    )
 
     with open("opaque_const_meta.txt", encoding="utf-8", mode="w") as f:
         for k, v in opaque_constants_meta.items():
