@@ -107,7 +107,7 @@ class AddressMetaDataLookup:
                     func_type = 'library_function'
                     source = 'library'
                 else:
-                    func_type = 'local_function'
+                    func_type = 'WHO KNOWS'
                     source = 'function'
 
                 meta = {
