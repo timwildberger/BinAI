@@ -138,7 +138,7 @@ def fill_constant_candidates(
     block_counter: int = 0
     for block in func.blocks:
         func_max_addr = max(func_min_addr, block.addr + block.size)
-        block_name = register_name_range(block_counter, basename="Block")
+        block_name = register_name_range(block_counter, basename="Block_Lit")
         block_list.append(
             {
                 block_name: (
@@ -355,7 +355,7 @@ def fill_constant_candidates(
     )
 
 
-def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, list[list[str | list[str]]]]]], dict[str, list[dict[str, list[str]]]], dict[str, list[str]]]:
+def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, list[list[str | list[str]]]]]], dict[str, list[dict[str, list[str]]]], dict[str, list[str]], dict[str, list[int]]]:
     """
     Operand types: (in theory)
     0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
@@ -387,12 +387,11 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
     """
 
     vocab: dict[str, int] = {}
-
     opaque_const_meta: dict[str, list[str]] = {}
-    func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = (
-        {}
-    )  # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
+
+    func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = {} # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
     func_disas: dict[str, list[dict[str, list[list[Union[str, list[str]]]]]]] = {}
+    func_tokens: dict[str, list[int]] = {}
 
     data = {}
     with open("tokenizer/data_store.json") as f:
@@ -415,7 +414,7 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
             text_size = section.memsize  # Größe in Bytes
             text_end = text_start + text_size
 
-    # BINARY PARSER FOR CONSTANT LOOKUP
+    # SECTION PARSER FOR FUNCTION LOOKUP
     lookup = AddressMetaDataLookup(path)
 
     func_disas_token: dict[str, list[dict[str, list[str]]]] = {}
@@ -477,13 +476,6 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
 
         # Then, iterate once and split into matching and non-matching
         # Only use classification we already did earlier during parsing
-        sorted_value_constant_literals = dict(
-            sorted(
-                value_constant_literals_candidates.items(),
-                key=lambda item: item[1],
-                reverse=True,
-            )
-        )
         sorted_opaque_candidates = dict(
             sorted(opaque_candidates.items(), key=lambda item: item[1], reverse=True)
         )
@@ -504,8 +496,8 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
         
         temp_tk = create_tokenstream(temp_bbs=temp_bbs, renamed_value_constants=renamed_value_constants, renamed_value_constants_negative=renamed_value_constants_negative, value_constant_literals=value_constant_literals, opaque_constants=opaque_constants, opaque_constant_literals=opaque_constant_literals, mnemonics=mnemonics, symbol_tokens=symbol_tokens, function_addr_range=function_addr_range, block_dict=block_dict)
         vocab, tokenized_instructions, block_run_lengths, insn_run_lengths = build_vocab_tokenize_and_index(temp_tk, vocab)
-        #print(temp_tk)
-        #print(tokenized_instructions)
+        #print(f"Token stream: {temp_tk}")
+        #print(f"Tokenized instructions: {tokenized_instructions}")
         #print(len(tokenized_instructions))
         #print(block_run_lengths)
         #print(insn_run_lengths)
@@ -513,12 +505,13 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
 
         func_disas[func_name] = temp_bbs
         func_disas_token[func_name] = temp_tk
+        func_tokens[func_name] = tokenized_instructions
         
     vocab = dict(sorted(vocab.items(), key=lambda item: item[1]))
     for key, value in vocab.items():
         print(f"{key}: {value}")
 
-    return (func_disas, func_disas_token, opaque_const_meta)
+    return (func_disas, func_disas_token, opaque_const_meta, func_tokens)
 
     # TODO Literal Tokens in Vocab: Block_Start Block_Lit_8 Block_Lit_7 Block_Lit_C Block_End: 2990
     # --> Block_Start: 35
@@ -617,8 +610,6 @@ def build_vocab_tokenize_and_index(
     insn_run_lengths = np.diff(np.concatenate(([0], insn_break_indices))).tolist()
 
     return vocab, tokenized_instructions, block_run_lengths, insn_run_lengths
-
-
 
 
 def parse_instruction(
@@ -774,7 +765,6 @@ def resolve_constant(
         or opaque_constant_literals.get(s, [None])[0]
         or f"UNBEKNOWNST: {s}"
     )
-
 
 
 def name_opaque_constants(
@@ -989,7 +979,7 @@ def main():
     disassembly: dict[str, list[dict[str, list[list[str | list[str]]]]]] = {}
     disassembly_tokenized: dict[str, list[dict[str, list[str]]]] = {}
     opaque_constants_meta: dict[str, list[str]]
-    disassembly, disassembly_tokenized, opaque_constants_meta = lowlevel_disas(
+    disassembly, disassembly_tokenized, opaque_constants_meta, func_tokens = lowlevel_disas(
         file_path, cfg, constants
     )
 
@@ -1004,6 +994,10 @@ def main():
         ):
             f.write(f"{k1}: {v1}\n")
             f.write(f"{k2}: {v2}\n")
+
+    with open("tokens.txt", encoding="utf-8", mode="w") as f:
+        for key, value in func_tokens.items():
+            f.write(f"{key}: {value}")
 
     return
     function_bbs = {}
