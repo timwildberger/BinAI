@@ -71,20 +71,22 @@ def fill_constant_candidates(
     opaque_const_meta: dict[str, list[str]],
     lookup: AddressMetaDataLookup,
     text_start: int,
-    text_end: int
-) -> Optional[tuple[
-    dict[str, int],
-    dict[str, int],
-    dict[str, int],
-    list[dict[str, list[list[Union[str, list[str]]]]]],
-    list[dict],
-    dict[str, str],
-    dict[str, str],
-    dict[str, str]
-]]:
+    text_end: int,
+) -> Optional[
+    tuple[
+        dict[str, int],
+        dict[str, int],
+        dict[str, int],
+        list[dict[str, list[list[Union[str, list[str]]]]]],
+        list[dict],
+        dict[str, str],
+        dict[str, str],
+        dict[str, str],
+    ]
+]:
     """
     Assigns all operands for a given function to datastructures that are used to determine the token type.
-    
+
     Args:
         func_name (str): Name of the function
         func_addr (int): Integer value of the function's start address
@@ -100,12 +102,10 @@ def fill_constant_candidates(
 
     func_min_addr: int = int(func_addr)
     func_max_addr: int = 0
-    
 
     if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
         return None
 
-    
     disassembly_list: list[list[Union[str, list[str]]]] = []
     blocks: set = set()
 
@@ -113,7 +113,7 @@ def fill_constant_candidates(
     value_constant_literals_candidates: dict[str, int] = {}
     opaque_candidates: dict[str, int] = {}
 
-    temp_bbs:   list[dict[str, list[list[Union[str, list[str]]]]]] = []
+    temp_bbs: list[dict[str, list[list[Union[str, list[str]]]]]] = []
     block_list: list[dict[str, tuple[str, str]]] = []
 
     mnemonics: dict[str, str] = {}
@@ -238,9 +238,11 @@ def fill_constant_candidates(
                                                 opaque_candidates, hex(imm_val)
                                             )
                                     else:
-                                        value_constant_literals_candidates = register_value_in_dict(
-                                            value_constant_literals_candidates,
-                                            hex(imm_val),
+                                        value_constant_literals_candidates = (
+                                            register_value_in_dict(
+                                                value_constant_literals_candidates,
+                                                hex(imm_val),
+                                            )
                                         )
                                 else:  # Fallback
                                     opaque_candidates = register_value_in_dict(
@@ -314,13 +316,18 @@ def fill_constant_candidates(
         opaque_candidates,
         temp_bbs,
         block_list,
-        mnemonics, 
+        mnemonics,
         symbol_tokens,
-        block_dict
+        block_dict,
     )
 
 
-def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, list[list[str | list[str]]]]]], dict[str, list[dict[str, list[str]]]], dict[str, list[str]], dict[str, list[int]]]:
+def lowlevel_disas(path, cfg, constant_list) -> tuple[
+    dict[str, list[dict[str, list[list[str | list[str]]]]]],
+    dict[str, list[dict[str, list[str]]]],
+    dict[str, list[str]],
+    dict[str, list[int]],
+]:
     """
     Operand types: (in theory)
     0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
@@ -354,7 +361,9 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
     vocab: dict[str, int] = {}
     opaque_const_meta: dict[str, list[str]] = {}
 
-    func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = {} # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
+    func_addr_range: dict[int, list[dict[str, tuple[str, str]]]] = (
+        {}
+    )  # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
     func_disas: dict[str, list[dict[str, list[list[Union[str, list[str]]]]]]] = {}
     func_tokens: dict[str, list[int]] = {}
 
@@ -387,7 +396,7 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
     for func_addr, func in cfg.functions.items():
         func_name = cfg.functions[func_addr].name
         function_analysis = fill_constant_candidates(
-            func_name = func_name,
+            func_name=func_name,
             func_addr=func_addr,
             func=func,
             arithmetic_instructions=arithmetic_instructions,
@@ -397,7 +406,7 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
             opaque_const_meta=opaque_const_meta,
             lookup=lookup,
             text_start=text_start,
-            text_end=text_end
+            text_end=text_end,
         )
 
         if function_analysis is None:
@@ -410,7 +419,9 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
         assert function_analysis[2] is not None
         opaque_candidates: dict[str, int] = function_analysis[2]
         assert function_analysis[3] is not None
-        temp_bbs: list[dict[str, list[list[Union[str, list[str]]]]]] = function_analysis[3]
+        temp_bbs: list[dict[str, list[list[Union[str, list[str]]]]]] = (
+            function_analysis[3]
+        )
         assert function_analysis[4] is not None
         block_list: list[dict[str, tuple[str, str]]] = function_analysis[4]
         assert function_analysis[5] is not None
@@ -419,8 +430,6 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
         symbol_tokens: dict[str, str] = function_analysis[6]
         assert function_analysis[7] is not None
         block_dict: dict[str, str] = function_analysis[7]
-
-
 
         func_addr_range[func_addr] = sorted(
             block_list, key=lambda d: list(d.values())[0][0]
@@ -454,48 +463,54 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[dict[str, list[dict[str, l
             func_addr
         ]
 
-        
-        temp_tk = create_tokenstream(temp_bbs=temp_bbs, renamed_value_constants=renamed_value_constants, value_constant_literals=value_constant_literals, opaque_constants=opaque_constants, opaque_constant_literals=opaque_constant_literals, mnemonics=mnemonics, symbol_tokens=symbol_tokens, function_addr_range=function_addr_range, block_dict=block_dict)
-        vocab, tokenized_instructions, block_run_lengths, insn_run_lengths = build_vocab_tokenize_and_index(temp_tk, vocab)
-        #print(f"Token stream: {temp_tk}")
-        #print(f"Tokenized instructions: {tokenized_instructions}")
-        #print(len(tokenized_instructions))
-        #print(block_run_lengths)
-        #print(insn_run_lengths)
-
+        temp_tk = create_tokenstream(
+            temp_bbs=temp_bbs,
+            renamed_value_constants=renamed_value_constants,
+            value_constant_literals=value_constant_literals,
+            opaque_constants=opaque_constants,
+            opaque_constant_literals=opaque_constant_literals,
+            mnemonics=mnemonics,
+            symbol_tokens=symbol_tokens,
+            function_addr_range=function_addr_range,
+            block_dict=block_dict,
+        )
+        vocab, tokenized_instructions, block_run_lengths, insn_run_lengths = (
+            build_vocab_tokenize_and_index(temp_tk, vocab)
+        )
+        # print(f"Token stream: {temp_tk}")
+        # print(f"Tokenized instructions: {tokenized_instructions}")
+        # print(len(tokenized_instructions))
+        # print(block_run_lengths)
+        # print(insn_run_lengths)
 
         func_disas[func_name] = temp_bbs
         func_disas_token[func_name] = temp_tk
         func_tokens[func_name] = tokenized_instructions
-        
+
     vocab = dict(sorted(vocab.items(), key=lambda item: item[1]))
     for key, value in vocab.items():
         print(f"{key}: {value}")
 
     return (func_disas, func_disas_token, opaque_const_meta, func_tokens)
 
-    # TODO Literal Tokens in Vocab: Block_Start Block_Lit_8 Block_Lit_7 Block_Lit_C Block_End: 2990
-    # --> Block_Start: 35
-    # --> Block_Lit_7: 46
-    # --> Block_Lit_C: 49
-    # --> Block_End: 172
 
-
-
-
-def create_tokenstream(temp_bbs, renamed_value_constants,
-                    value_constant_literals,
-                    opaque_constants,
-                    opaque_constant_literals,
-                    mnemonics,
-                    symbol_tokens,
-                    function_addr_range, block_dict) -> list[dict[str, list[str]]]:
+def create_tokenstream(
+    temp_bbs,
+    renamed_value_constants,
+    value_constant_literals,
+    opaque_constants,
+    opaque_constant_literals,
+    mnemonics,
+    symbol_tokens,
+    function_addr_range,
+    block_dict,
+) -> list[dict[str, list[str]]]:
     temp_tk: list[dict[str, list[str]]] = []
-    
+
     for block_code in temp_bbs:
         token_list: list[str] = []
         block_code_addr: str = ""
-        block_instrs: str | list[str]= []
+        block_instrs: str | list[str] = []
         # There is only one item --> traversal like this is fine
         for addr, op_str in block_code.items():  # dict[str, list[str]]
             block_code_addr = addr
@@ -519,9 +534,9 @@ def create_tokenstream(temp_bbs, renamed_value_constants,
 
 
 def build_vocab_tokenize_and_index(
-    blocks: list[dict[str, list[str]]],
-    vocab: dict[str, int]
+    blocks: list[dict[str, list[str]]], vocab: dict[str, int]
 ) -> tuple[dict[str, int], list[int], list[int], list[int]]:
+    
     current_id = max(vocab.values(), default=-1) + 1
 
     tokenized_instructions: list[int] = []
@@ -530,8 +545,8 @@ def build_vocab_tokenize_and_index(
     insn_break_indices: list[int] = []
 
     token_count = 0  # Zähler für Token insgesamt
-    block_idx = 0    # Index des aktuellen Blocks
-    insn_idx = 0     # Index der aktuellen Instruktion innerhalb des Blocks
+    block_idx = 0  # Index des aktuellen Blocks
+    insn_idx = 0  # Index der aktuellen Instruktion innerhalb des Blocks
 
     for block in blocks:
         for block_name, instructions in block.items():
@@ -545,7 +560,7 @@ def build_vocab_tokenize_and_index(
             if block_name not in vocab:
                 vocab[block_name] = current_id
                 current_id += 1
-            
+
             # Alle Instruktionen im Block durchgehen
             for instruction in instructions:
                 tokens = instruction.split()
@@ -555,11 +570,11 @@ def build_vocab_tokenize_and_index(
                         current_id += 1
                     tokenized_instructions.append(vocab[token])
                     token_count += 1
-                
+
                 # Letzter Token dieser Instruktion → Instruktionsindex speichern
                 insn_break_indices.append(token_count)
                 insn_idx += 1
-            
+
             # Letzter Token dieses Blocks → Blockindex speichern
             block_break_indices.append(token_count)
             block_idx += 1
@@ -613,19 +628,8 @@ def parse_instruction(
 
     mnemonic = ins_dict[0]
     op_str = ins_dict[1]
-    prefixes: list = ins_dict[2]
-    # print(prefixes)
 
     token_lst = []
-
-    # Add prefix tokens first
-    """
-    for prefix in prefixes:
-        if prefix in symbol_tokens:
-            token_lst.append(symbol_tokens[prefix])
-        else:
-            token_lst.append(f"UNKNOWN_PREFIX_{prefix}")
-    """
 
     # Add mnemonic token
     if mnemonic in mnemonics:
@@ -759,7 +763,6 @@ def name_value_constant_literals(
         renamed_dict (dict): Mapping from new constant name to tuple of value constant literal: occurences.
     """
     renamed_dict = {}
-    counter = 0
     """for addr, freq in vcl.items():
         if counter <= 16:
             new_name = f"VALUED_CONST_LIT_{hex(counter)[2:].upper()}"
@@ -922,25 +925,19 @@ def main():
     project = angr.Project(file_path, auto_load_libs=False)
     constants: dict[str, list[str]] = parse_and_save_data_sections(project)
 
-    # print(section_data)
-
-    # print(section_data)
-
-    # const_map = build_constant_map(project)
-    # annotate_disassembly_with_constants(project, const_map)
     cfg = project.analyses.CFGFast(normalize=True)
     disassembly: dict[str, list[dict[str, list[list[str | list[str]]]]]] = {}
     disassembly_tokenized: dict[str, list[dict[str, list[str]]]] = {}
     opaque_constants_meta: dict[str, list[str]]
-    disassembly, disassembly_tokenized, opaque_constants_meta, func_tokens = lowlevel_disas(
-        file_path, cfg, constants
+    disassembly, disassembly_tokenized, opaque_constants_meta, func_tokens = (
+        lowlevel_disas(file_path, cfg, constants)
     )
 
     with open("opaque_const_meta.txt", encoding="utf-8", mode="w") as f:
         for k, v in opaque_constants_meta.items():
             f.write(f"{k}: {v}\n")
 
-    with open("test.txt", encoding="utf-8", mode="w") as f:
+    with open(f"test.txt", encoding="utf-8", mode="w") as f:
         f.write("Function name, assembly\n")
         for (k1, v1), (k2, v2) in zip(
             disassembly.items(), disassembly_tokenized.items()
@@ -953,74 +950,7 @@ def main():
             f.write(f"{key}: {value}")
 
     return
-    function_bbs = {}
-    string_map = {}
-    iter = 0
-    obj = project.loader.main_object
-    # --- STRING MAP (From .rodata or readable segments)
-    # --- STRING MAP ---
-    # Search readable sections in the main binary
-    for section in obj.sections:
-        if section.name in [".rodata", ".data", ".data.rel.ro"]:
-            print(
-                f"{section.name}: vaddr=0x{section.vaddr:x}, size=0x{section.memsize:x}"
-            )
-            data = project.loader.memory.load(section.vaddr, section.memsize)
-            print(f"{section.name} non-zero bytes:", sum(b != 0 for b in data))
-            print(f"{section.name} total bytes:", len(data))
-            data = project.loader.memory.load(section.vaddr, section.memsize)
-            print(f"Dumping first 64 bytes of {section.name}:")
-            print(data[:64].hex(" "))
-            try:
-                data = project.loader.memory.load(section.vaddr, section.memsize)
-            except Exception:
-                continue
-
-            string_map = {}  # Hier neu initialisieren, für jede Sektion separat
-
-            base = section.vaddr
-            for match in re.finditer(rb"[ -~]{4,}", data):
-                string_val = match.group().decode(errors="ignore")
-                addr = base + match.start()
-                string_map[addr] = string_val
-
-            with open(f"{section.name}.txt", encoding="utf-8", mode="w") as f:
-                for address, string in string_map.items():
-                    f.write(f'{hex(address)}: "{string}"\n')
-    return
-
-    for func_addr, func in cfg.functions.items():
-        if iter == 100:
-            break
-        if func.name.startswith("sub_") or func.name in [
-            "UnresolvableCallTarget",
-            "UnresolvableJumpTarget",
-        ]:
-            continue
-        temp_bbs = {}
-        for block in func.blocks:
-            block_addr = block.addr
-            disassembly = block.capstone.insns
-            # print(disassembly)
-            disassembly_list = [(insn.mnemonic, insn.op_str) for insn in disassembly]
-            print(disassembly_list)
-            temp_bbs[hex(block_addr)] = disassembly_list
-        function_bbs[func_addr] = temp_bbs
-        iter += 1
-    # print(function_bbs)
 
 
 if __name__ == "__main__":
     main()
-
-
-# TODO Datei mit Pointer : type, Value - register which call addressess point to what datum
-
-
-"""
-0: {type: Local function, name: fibonacci}
-1: {type: String, value: "Hello World I love u"}
-2: {type: Library function, name: read_file, library: libc}
-3: {type: Library function, name: close_file, library: libc}
-
-"""
