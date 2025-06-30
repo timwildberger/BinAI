@@ -567,7 +567,7 @@ def lowlevel_disas(path, cfg, constant_list):
         # print(block_run_lengths)
         # print(insn_run_lengths)
 
-        #func_disas[func_name] = temp_bbs
+        func_disas[func_name] = temp_bbs
         #func_disas_token[func_name] = temp_tk
         #func_tokens[func_name] = tokenized_instructions
 
@@ -612,6 +612,11 @@ def lowlevel_disas(path, cfg, constant_list):
         except Exception as e:
             print(f"Error processing {func_name}: {e}.\nTokenstream: {temp_tk}\nTokens: {tokenized_instructions}\nBlock encoding: {block_run_lengths}\nInstructions: {insn_run_lengths}\nMetaData: {meta_result}")
             raise ValueError
+        
+        with open("output_OG.csv", encoding="utf-8", mode="w") as csvfile:
+            writer = csv.writer(csvfile)
+            for k, v in func_disas.items():
+                writer.writerow([f"{k}: {v}"])
         
         func_names.append(func_name)
         token_dict[func_name] = tokens_base64
@@ -1108,10 +1113,108 @@ def parse_init_sections(
     return entries
 
 
+def reverse_tokenization(
+    tokenized_instructions: np.ndarray,
+    block_run_lengths: list[int],
+    insn_run_lengths: list[int],
+    vocab: dict[int, str]
+) -> list[dict[str, list[str]]]:
+    # Step 2: Split tokenized_instructions into instructions
+    instructions = []
+    block_insns = []
+    print(f"\nTOKENIZED INSTRUCTIONS: {tokenized_instructions}")
+    print(f"BLOCK RUN LENGTHS: {block_run_lengths}")
+    print(f"INSN_RUN_LENGTHS: {insn_run_lengths}")
+    
+    global_counter = 0
+    for block in block_run_lengths:
+        block_counter = 0
+        block_insns.append(vocab[int(tokenized_instructions[global_counter])])
+        global_counter += 1
+        while block_counter < int(block):
+            block_insns.append(vocab[int(tokenized_instructions[global_counter])])
+            global_counter += 1
+            block_counter += 1
+        print(block_insns)
+
+
+
+
+
+    for length in insn_run_lengths:
+        length = int(length)
+        end = start + length
+        tokens = tokenized_instructions[start:end].tolist()
+        instructions.append(tokens)
+        start = end
+    
+    print(f"INSTRUCTIONS: {instructions}")
+
+    # Step 3: Convert instructions tokens to strings
+    instructions_text = []
+    for instr_tokens in instructions:
+        tokens = [inv_vocab.get(tid, f"<UNK_{tid}>") for tid in instr_tokens]
+        instructions_text.append(" ".join(tokens))
+    print(f"INSTRUCTIONS TEXT: {instructions_text}")
+
+    # Step 4: Group instructions into blocks by block_run_lengths
+    blocks = []
+    instr_idx = 0
+    for block_len in block_run_lengths:
+        block_len = int(block_len)
+        block_instrs = instructions_text[instr_idx:instr_idx + block_len]
+
+        # Assume first instruction in the block is the block name token(s)
+        # Parse block name from first instruction string (token(s))
+        # This depends on how you encoded block names — assuming first instruction is block name token(s)
+        block_name = block_instrs[0]  # e.g. "Block_1"
+
+        # Rest of the instructions in the block:
+        instrs_in_block = block_instrs[1:]
+
+        blocks.append({block_name: instrs_in_block})
+
+        instr_idx += block_len
+
+    return blocks
+
+
+def token_to_insn(path: str):
+
+    with open(path, newline='') as csvfile:
+        reader = csv.reader(csvfile)
+        token_dict: dict[str, str] = {}
+        vocab: dict[int, str] = {}
+        row_iter: int = 0
+        for row in reader:
+            if row_iter==0:
+                for element in row:
+                    vocab[row_iter] = element
+                    row_iter += 1
+                print(vocab)
+            else:
+                #print("\n")
+                index = row[0]
+                #print(row[1])
+                tokens = base64_to_ndarray(row[1])
+                block_runlength = base64_to_ndarray(row[2])
+                insn_runlength = base64_to_ndarray(row[3])
+                string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
+                token_dict[index] = string_stream
+    
+    with open("reconstructed_disassembly.csv", newline="", mode="w") as csvfile:
+        writer = csv.writer(csvfile)
+        for k, v in token_dict.items():
+            writer.writerow([f"{k}: {v}"])
+
+
+    # TODO Tokenized instructions does not contain a 0
+
 def main():
+    
     file_path = "src/curl/x86-clang-3.5-O0_curl"
     # print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
-
+    """
     project = angr.Project(file_path, auto_load_libs=False)
     constants: dict[str, list[str]] = parse_and_save_data_sections(project)
 
@@ -1119,15 +1222,15 @@ def main():
     disassembly: dict[str, list[dict[str, list[list[str | list[str]]]]]] = {}
     disassembly_tokenized: dict[str, list[dict[str, list[str]]]] = {}
     opaque_constants_meta: dict[str, list[str]] = {}
-    """disassembly, disassembly_tokenized, opaque_constants_meta, func_tokens = (
-        lowlevel_disas(file_path, cfg, constants)
-    )"""
+    #disassembly, disassembly_tokenized, opaque_constants_meta, func_tokens = (
+    #    lowlevel_disas(file_path, cfg, constants)
+    #)
     (func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_map) = lowlevel_disas(file_path, cfg, constants)
-
-        
-    print(token_to_instruction(vocab, base64_to_ndarray("KHZkiZGERLA=")))
-
-
+    """
+    """
+    #token_to_instruction(vocab, base64_to_ndarray("KHZkiZGERLA="))
+    """
+    """
     with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(vocab.keys())  # or whatever header you want
@@ -1147,16 +1250,8 @@ def main():
                 opaque_meta_dict[element]
             ]
             writer.writerow(row)
-
-    with open(f"test.txt", encoding="utf-8", mode="w") as f:
-        f.write("Function name, assembly\n")
-        for (k1, v1), (k2, v2) in zip(
-            disassembly.items(), disassembly_tokenized.items()
-        ):
-            f.write(f"{k1}: {v1}\n")
-            f.write(f"{k2}: {v2}\n")
-
-    return
+    """
+    token_to_insn("output.csv")
 
 
 if __name__ == "__main__":
