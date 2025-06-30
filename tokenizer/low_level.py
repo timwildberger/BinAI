@@ -217,12 +217,12 @@ def fill_constant_candidates(
                                                 )
                                             else:
                                                 if (
-                                                    meta["name"]
+                                                    hex(imm_val)
                                                     not in opaque_const_meta
                                                 ):
-                                                    opaque_const_meta_list[hex(imm_val)] = (hex(meta["start_addr"]), hex(meta["end_addr"]), meta["type"], "function")
-                                                    opaque_const_meta[meta["name"]] = [
-                                                        hex(meta["start_addr"]),
+                                                    opaque_const_meta_list[hex(imm_val)] = (hex(meta["start_addr"]), hex(meta["end_addr"]), meta["name"], meta["type"], "function")
+                                                    opaque_const_meta[hex(meta["start_addr"])] = [
+                                                        meta["name"],
                                                         hex(meta["end_addr"]),
                                                         meta["type"],
                                                         meta.get("library", "unknown"),
@@ -234,10 +234,10 @@ def fill_constant_candidates(
                                                     )
                                                 )
                                         else:
-                                            if meta["name"] not in opaque_const_meta:
-                                                opaque_const_meta_list[hex(imm_val)] = (hex(meta["start_addr"]), hex(meta["end_addr"]), meta["type"], "unknown")
-                                                opaque_const_meta[meta["name"]] = [
-                                                    hex(meta["start_addr"]),
+                                            if hex(imm_val) not in opaque_const_meta:
+                                                opaque_const_meta_list[hex(imm_val)] = (hex(meta["start_addr"]), hex(meta["end_addr"]), meta["name"], meta["type"], "unknown")
+                                                opaque_const_meta[hex(meta["start_addr"])] = [
+                                                    meta["name"],
                                                     hex(meta["end_addr"]),
                                                     meta["type"],
                                                 ]
@@ -252,7 +252,13 @@ def fill_constant_candidates(
                                             )
                                         )
                                 else:  # Fallback
-                                    opaque_const_meta_list[hex(imm_val)] = (hex(imm_val), hex(meta["end_addr"]), meta["type"], meta.get("library", "unknown"))
+                                    if hex(imm_val) not in opaque_const_meta:
+                                        opaque_const_meta_list[hex(imm_val)] = hex(imm_val), hex(meta["end_addr"]), (meta["name"], meta["type"], meta.get("library", "unknown"))
+                                        opaque_const_meta[hex(meta["start_addr"])] = [
+                                                    meta["name"],
+                                                    hex(meta["end_addr"]),
+                                                    meta["type"],
+                                                ]
                                     opaque_candidates = register_value_in_dict(
                                         opaque_candidates, hex(imm_val)
                                     )
@@ -298,10 +304,10 @@ def fill_constant_candidates(
                                 meta, kind = lookup.lookup(disp)
                                 if meta is not None:
                                     if text_start <= disp < text_end:
-                                        if meta["name"] not in opaque_const_meta:
-                                            opaque_const_meta_list[hex(disp)] = (hex(meta["start_addr"]), hex(meta["end_addr"]), meta["type"], meta.get("library", "unknown"))
-                                            opaque_const_meta[meta["name"]] = [
-                                                hex(meta["start_addr"]),
+                                        if hex(disp) not in opaque_const_meta:
+                                            opaque_const_meta_list[hex(disp)] = (hex(meta["start_addr"]), hex(meta["end_addr"]), meta["name"], meta["type"], meta.get("library", "unknown"))
+                                            opaque_const_meta[hex(meta["start_addr"])] = [
+                                                meta["name"],
                                                 hex(meta["end_addr"]),
                                                 meta["type"],
                                             ]
@@ -309,10 +315,10 @@ def fill_constant_candidates(
                                             opaque_candidates, hex(disp)
                                         )
                                     elif disp < func_min_addr or disp > func_max_addr:
-                                        if meta["name"] not in opaque_const_meta:
-                                            opaque_const_meta_list[hex(disp)] = (hex(meta["start_addr"]), hex(meta["end_addr"]), meta["type"], meta.get("library", "unknown"))
-                                            opaque_const_meta[meta["name"]] = [
-                                                hex(meta["start_addr"]),
+                                        if hex(disp) not in opaque_const_meta:
+                                            opaque_const_meta_list[hex(disp)] = (hex(meta["start_addr"]), hex(meta["end_addr"]), meta["name"], meta["type"], meta.get("library", "unknown"))
+                                            opaque_const_meta[hex(meta["start_addr"])] = [
+                                                meta["name"],
                                                 hex(meta["end_addr"]),
                                                 meta["type"],
                                             ]
@@ -363,6 +369,8 @@ def fill_constant_candidates(
         mnemonics,
         symbol_tokens,
         block_dict,
+        opaque_const_meta,
+        opaque_const_meta_list
     )
 
 
@@ -433,6 +441,7 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
 
     func_disas_token: dict[str, list[dict[str, list[str]]]] = {}
 
+
     for func_addr, func in cfg.functions.items():
         func_name = cfg.functions[func_addr].name
         opaque_const_meta_list = {}
@@ -451,6 +460,8 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
             text_start=text_start,
             text_end=text_end,
         )
+
+        
 
         if function_analysis is None:
             continue
@@ -473,6 +484,11 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
         symbol_tokens: dict[str, str] = function_analysis[6]
         assert function_analysis[7] is not None
         block_dict: dict[str, str] = function_analysis[7]
+        assert function_analysis[8] is not None
+        opaque_const_meta = function_analysis[8]
+        assert function_analysis[9] is not None
+        opaque_const_meta_list = function_analysis[9]
+
 
         func_addr_range[func_addr] = sorted(
             block_list, key=lambda d: list(d.values())[0][0]
@@ -501,6 +517,28 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
         opaque_constants, opaque_constant_literals = name_opaque_constants(
             sorted_opaque_candidates, "OPAQUE_CONST"
         )
+        
+        if len(opaque_constant_literals) != 0:
+            print("\n")
+            for k, v in opaque_const_meta.items():
+                print(f"{k}: {v}")
+
+            print("\nOPAQUE_CONST_META_LIST: \n")
+            for k, v in opaque_const_meta_list.items():
+                print(f"{k}: {v}")
+            print("\n")
+            for k, v in opaque_constants.items():
+                print(f"{k}: {v}")
+            print("\n")
+            for k, v in opaque_constant_literals.items():
+                print(f"{k}: {v}")  
+
+            meta_result = resolve_metadata(opaque_constants, opaque_constant_literals, opaque_const_meta_list, placeholder=("UNKNOWN", -1))
+            for k in  meta_result:
+                print(f"{k}")
+            raise ValueError
+    
+        
         
         function_addr_range: list[dict[str, tuple[str, str]]] = func_addr_range[
             func_addr
@@ -536,6 +574,40 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
         print(f"{key}: {value}")
 
     return (func_disas, func_disas_token, opaque_const_meta, func_tokens)
+
+
+def resolve_metadata(dict1, dict2, metadata_dict, placeholder=('UNKNOWN', -1), key_index=2):
+    """
+    Matches addresses from dict1 and dict2 with metadata_dict using exact and range matching.
+
+    :param dict1: dict mapping address to token name
+    :param dict2: same as dict1
+    :param metadata_dict: dict mapping address to metadata tuple (token_name, range_end, ...)
+    :param placeholder: tuple to use when no match is found
+    :param key_index: index in metadata tuple that holds the end address
+    :return: list of metadata tuples (either matched or placeholder)
+    """
+    result = []
+    addresses = set(dict1.keys()) | set(dict2.keys())
+
+    for addr in addresses:
+        if addr in metadata_dict:
+            result.append(metadata_dict[addr])
+        else:
+            # Try range match
+            match_found = False
+            for base_addr, meta in metadata_dict.items():
+                try:
+                    range_end = int(meta[key_index], 16) if isinstance(meta[key_index], str) else meta[key_index]
+                    if int(base_addr, 16) <= int(addr, 16) <= range_end:
+                        result.append(meta)
+                        match_found = True
+                        break
+                except (IndexError, ValueError, TypeError):
+                    continue
+            if not match_found:
+                result.append(placeholder)
+    return result
 
 def find_function_by_address(address: str, func_map: dict[str, list[str]]) -> str | None:
     """
@@ -1019,9 +1091,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    # TODO OPAQUE_CONST_META: Pro Function: Da aufsteigend sortiert, bildet die ID den Index ab
-    # --> [(start, ende, name, typ)]
-    # TODO Alle nichtauflösbaren OPAQUE CONSTANTS trotzdem mit start, unknown, unknown, unknown registrieren
 
     # TODO nach csv bauen: Reversecheck ob das auch alles wieder korrekt aufgelöst wird
