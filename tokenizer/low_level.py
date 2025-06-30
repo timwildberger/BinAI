@@ -3,10 +3,12 @@ import re
 import csv, json
 from pathlib import Path
 from address_meta_data_lookup import AddressMetaDataLookup
-from compact_base64_utils import ndarray_to_base64
+from compact_base64_utils import ndarray_to_base64, base64_to_ndarray
 from utils import register_name_range, register_value_in_dict, mnemonic_to_token
 from typing import Union, Optional
+from tqdm import tqdm
 import numpy as np
+import numpy.typing as npt
 
 """
 Blöcke 0 bis 16:
@@ -104,9 +106,6 @@ def fill_constant_candidates(
     func_min_addr: int = int(func_addr)
     func_max_addr: int = 0
 
-    if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
-        return None
-
     disassembly_list: list[list[Union[str, list[str]]]] = []
     blocks: set = set()
 
@@ -123,7 +122,12 @@ def fill_constant_candidates(
     block_dict: dict[str, str] = {}  # hex value of Block address: block_name
 
     block_counter: int = 0
+
+    if sum(1 for _ in func.blocks) == 1 and next(func.blocks).capstone.insns is None:
+        return None
+    
     for block in func.blocks:
+        
         func_max_addr = max(func_min_addr, block.addr + block.size)
 
         # ------------------Register name of current Block---------------------
@@ -374,12 +378,7 @@ def fill_constant_candidates(
     )
 
 
-def lowlevel_disas(path, cfg, constant_list) -> tuple[
-    dict[str, list[dict[str, list[list[str | list[str]]]]]],
-    dict[str, list[dict[str, list[str]]]],
-    dict[str, list[str]],
-    dict[str, list[int]],
-]:
+def lowlevel_disas(path, cfg, constant_list):
     """
     Operand types: (in theory)
     0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
@@ -405,6 +404,14 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
     2: {type: Library function, name: read_file, library: libc}
     3: {type: Library function, name: close_file, library: libc}
     """
+    megadict: dict[str, str] = {}
+    func_names = []
+    token_dict = {}
+    block_runlength_dict = {}
+    insn_runlength_dict = {}
+    opaque_meta_dict = {}
+
+    backup_token_dict = {}
 
     vocab: dict[str, int] = {}
     opaque_const_meta: dict[str, list[str]] = {}
@@ -441,9 +448,16 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
 
     func_disas_token: dict[str, list[dict[str, list[str]]]] = {}
 
+    func_name_addr = {}
+    duplicate_func_names: dict[str, str] = {}
+    seen = set()
 
-    for func_addr, func in cfg.functions.items():
+
+    for func_addr, func in tqdm(iterable=cfg.functions.items(), desc="Retrieving data from alllll functions. Like a big boy."):
         func_name = cfg.functions[func_addr].name
+        func_name_addr[func_name] = func_addr
+        if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
+            continue
         opaque_const_meta_list = {}
 
         function_analysis = fill_constant_candidates(
@@ -518,27 +532,9 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
             sorted_opaque_candidates, "OPAQUE_CONST"
         )
         
-        if len(opaque_constant_literals) != 0:
-            print("\n")
-            for k, v in opaque_const_meta.items():
-                print(f"{k}: {v}")
-
-            print("\nOPAQUE_CONST_META_LIST: \n")
-            for k, v in opaque_const_meta_list.items():
-                print(f"{k}: {v}")
-            print("\n")
-            for k, v in opaque_constants.items():
-                print(f"{k}: {v}")
-            print("\n")
-            for k, v in opaque_constant_literals.items():
-                print(f"{k}: {v}")  
-
-            meta_result = resolve_metadata(opaque_constants, opaque_constant_literals, opaque_const_meta_list, placeholder=("UNKNOWN", -1))
-            for k in  meta_result:
-                print(f"{k}")
-            raise ValueError
-    
-        
+        # META DATA DICT
+        meta_result: str = str(resolve_metadata(opaque_constants, opaque_constant_literals, opaque_const_meta_list, placeholder=("UNKNOWN", -1)))
+        #print(meta_result)
         
         function_addr_range: list[dict[str, tuple[str, str]]] = func_addr_range[
             func_addr
@@ -556,27 +552,87 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
             function_addr_range=function_addr_range,
             block_dict=block_dict,
         )
+
+
         vocab, tokenized_instructions, block_run_lengths, insn_run_lengths = (
             build_vocab_tokenize_and_index(temp_tk, vocab)
         )
+        if len(tokenized_instructions) == 0:
+            print(f"{func_name} has no instructions.")
+            continue
+        
         # print(f"Token stream: {temp_tk}")
         # print(f"Tokenized instructions: {tokenized_instructions}")
         # print(len(tokenized_instructions))
         # print(block_run_lengths)
         # print(insn_run_lengths)
 
-        func_disas[func_name] = temp_bbs
-        func_disas_token[func_name] = temp_tk
-        func_tokens[func_name] = tokenized_instructions
+        #func_disas[func_name] = temp_bbs
+        #func_disas_token[func_name] = temp_tk
+        #func_tokens[func_name] = tokenized_instructions
+
+
+        try:
+            tokens_base64 = ndarray_to_base64(tokenized_instructions)
+            block_base64 = ndarray_to_base64(block_run_lengths)
+            insn_base64 = ndarray_to_base64(insn_run_lengths)
+            if func_name in func_names:
+                i = 1
+                new_name = f"{func_name}_{i}"
+                while new_name in seen:
+                    i += 1
+                    new_name = f"{func_name}_{i}"
+                duplicate_func_names[new_name] = func_name  # mapping duplicate->original
+                func_name = new_name
+                seen.add(func_name)
+                
+                """for func_addr_2, func in cfg.functions.items():
+                    if cfg.functions[func_addr_2].name == func_name:
+                        print(f"OLD: {func_addr_2}")
+                        print(f"NEW: {func_addr}")
+                        raise ValueError
+                index = func_names[func_names.index(func_name)]
+                print(f"OLD: {func_name_addr[index]}")
+                print(f"NEW: {func_addr}")
+
+
+                if not (token_dict[index] == tokens_base64 and block_runlength_dict[index] == block_base64 and insn_runlength_dict[index] == insn_base64):
+                    print(f"THERE IS A FORBIDDEN DUPLICATE!")
+                    print(f"OG: {token_dict[index]}\nNEW: {tokens_base64}")
+                    print(f"OG: {base64_to_ndarray(token_dict[index])}\nNEW: {base64_to_ndarray(tokens_base64)}")
+                    print("INSTRUCTIONS")
+
+                    old = token_to_instruction(vocab, base64_to_ndarray(token_dict[index]))
+                    new = token_to_instruction(vocab, base64_to_ndarray(tokens_base64))
+                    assert new == old
+
+                    raise ValueError
+                else:
+                    continue"""
+        except Exception as e:
+            print(f"Error processing {func_name}: {e}.\nTokenstream: {temp_tk}\nTokens: {tokenized_instructions}\nBlock encoding: {block_run_lengths}\nInstructions: {insn_run_lengths}\nMetaData: {meta_result}")
+            raise ValueError
         
-    vocab = dict(sorted(vocab.items(), key=lambda item: item[1]))
-    for key, value in vocab.items():
-        print(f"{key}: {value}")
+        func_names.append(func_name)
+        token_dict[func_name] = tokens_base64
+        block_runlength_dict[func_name] = block_base64
+        insn_runlength_dict[func_name] = insn_base64
+        opaque_meta_dict[func_name] = meta_result
+        print(f"{len(func_names)}, {len(token_dict)}, {len(block_runlength_dict)}, {len(insn_runlength_dict)}, {len(opaque_meta_dict)}")
 
-    return (func_disas, func_disas_token, opaque_const_meta, func_tokens)
+    return (func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_func_names)
+
+def token_to_instruction(vocab, tokenstream):
+    insn = []
+    print(f"TOKENSTREAM NEWNWNWNWNNWNW: {tokenstream}")
+    id_to_token = {v: k for k, v in vocab.items()}
+    for element in tokenstream:
+        insn.append(id_to_token[int(element)])
+    return insn
 
 
-def resolve_metadata(dict1, dict2, metadata_dict, placeholder=('UNKNOWN', -1), key_index=2):
+
+def resolve_metadata(dict1, dict2, metadata_dict, placeholder=('UNKNOWN', -1), key_index=2) -> list[tuple[str, str, str, str, str]]:
     """
     Matches addresses from dict1 and dict2 with metadata_dict using exact and range matching.
 
@@ -587,7 +643,7 @@ def resolve_metadata(dict1, dict2, metadata_dict, placeholder=('UNKNOWN', -1), k
     :param key_index: index in metadata tuple that holds the end address
     :return: list of metadata tuples (either matched or placeholder)
     """
-    result = []
+    result: list[tuple[str, str, str, str, str]] = []
     addresses = set(dict1.keys()) | set(dict2.keys())
 
     for addr in addresses:
@@ -682,11 +738,12 @@ def create_tokenstream(
 
 def build_vocab_tokenize_and_index(
     blocks: list[dict[str, list[str]]], vocab: dict[str, int]
-) -> tuple[dict[str, int], list[int], list[int], list[int]]:
+) -> tuple[dict[str, int], npt.NDArray[np.int_], npt.NDArray[np.int_], npt.NDArray[np.int_]]:
     
     current_id = max(vocab.values(), default=-1) + 1
 
-    tokenized_instructions: list[int] = []
+    #tokenized_instructions: list[int] = []
+    tokenized_instructions: npt.NDArray[np.int_] = np.array([], dtype=int)
 
     block_break_indices: list[int] = []
     insn_break_indices: list[int] = []
@@ -715,7 +772,7 @@ def build_vocab_tokenize_and_index(
                     if token not in vocab:
                         vocab[token] = current_id
                         current_id += 1
-                    tokenized_instructions.append(vocab[token])
+                    tokenized_instructions = np.append(tokenized_instructions, vocab[token])
                     token_count += 1
 
                 # Letzter Token dieser Instruktion → Instruktionsindex speichern
@@ -727,8 +784,8 @@ def build_vocab_tokenize_and_index(
             block_idx += 1
 
     # Run-Length-Encoding: Differenzen der Break-Indices (inkl. 0 vorne)
-    block_run_lengths = np.diff(np.concatenate(([0], block_break_indices))).tolist()
-    insn_run_lengths = np.diff(np.concatenate(([0], insn_break_indices))).tolist()
+    block_run_lengths: npt.NDArray[np.int_] = np.diff(np.concatenate(([0], block_break_indices))).tolist()
+    insn_run_lengths: npt.NDArray[np.int_] = np.diff(np.concatenate(([0], insn_break_indices))).tolist()
 
     return vocab, tokenized_instructions, block_run_lengths, insn_run_lengths
 
@@ -1062,17 +1119,31 @@ def main():
     disassembly: dict[str, list[dict[str, list[list[str | list[str]]]]]] = {}
     disassembly_tokenized: dict[str, list[dict[str, list[str]]]] = {}
     opaque_constants_meta: dict[str, list[str]] = {}
-    disassembly, disassembly_tokenized, opaque_constants_meta, func_tokens = (
+    """disassembly, disassembly_tokenized, opaque_constants_meta, func_tokens = (
         lowlevel_disas(file_path, cfg, constants)
-    )
+    )"""
+    (func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_map) = lowlevel_disas(file_path, cfg, constants)
 
-    with open("opaque_const_meta.txt", encoding="utf-8", mode="w") as f:
-        for k, v in opaque_constants_meta.items():
-            f.write(f"{k}: {v}\n")
-
-    with open("tokenized_disassembly.txt", encoding="utf-8", mode="w") as f:
-        for k, v in disassembly_tokenized.items():
-            f.write(f"{k}: {v}\n")
+        
+    with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(vocab.keys())  # or whatever header you want
+        
+        for element in func_names:
+            # Resolve original name if duplicate
+            if element in duplicate_map:
+                original_name = duplicate_map[element]
+            else:
+                original_name = element
+            
+            row = [
+                original_name,
+                token_dict[element],
+                block_runlength_dict[element],
+                insn_runlength_dict[element],
+                opaque_meta_dict[element]
+            ]
+            writer.writerow(row)
 
     with open(f"test.txt", encoding="utf-8", mode="w") as f:
         f.write("Function name, assembly\n")
@@ -1082,10 +1153,6 @@ def main():
             f.write(f"{k1}: {v1}\n")
             f.write(f"{k2}: {v2}\n")
 
-    with open("tokens.txt", encoding="utf-8", mode="w") as f:
-        for key, value in func_tokens.items():
-            f.write(f"{key}: {value}")
-
     return
 
 
@@ -1093,3 +1160,4 @@ if __name__ == "__main__":
     main()
 
     # TODO nach csv bauen: Reversecheck ob das auch alles wieder korrekt aufgelöst wird
+    # TODO proper placeholder for unresolvable opaque constants
