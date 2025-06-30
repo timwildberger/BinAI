@@ -62,16 +62,16 @@
         "int"
     ],
     "inv_prefix_tokens" : {
-        "0xF0": "x86_lock",
-        "0xF2": "x86_repne", 
-        "0xF3": "x86_rep", 
-        "0x26": "x86_es:",
-        "0x2E": "x86_cs:",
-        "0x36": "x86_ss:",
-        "0x3E": "x86_ds:",
-        "0x64": "x86_fs:",
-        "0x65": "x86_gs:",
-        "0x66": "x86_operand_size_override",
-        "0x67": "x86_address-size_override"
+        "0xF0": "lock",
+        "0xF2": "repne", 
+        "0xF3": "rep", 
+        "0x26": "es:",
+        "0x2E": "cs:",
+        "0x36": "ss:",
+        "0x3E": "ds:",
+        "0x64": "fs:",
+        "0x65": "gs:",
+        "0x66": "operand_size_override",
+        "0x67": "address-size_override"
     }
 }

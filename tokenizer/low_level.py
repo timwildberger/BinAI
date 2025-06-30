@@ -4,7 +4,7 @@ import csv, json
 from pathlib import Path
 from address_meta_data_lookup import AddressMetaDataLookup
 from compact_base64_utils import ndarray_to_base64
-from utils import register_name_range, register_value_in_dict
+from utils import register_name_range, register_value_in_dict, mnemonic_to_token
 from typing import Union, Optional
 import numpy as np
 
@@ -125,10 +125,12 @@ def fill_constant_candidates(
     block_counter: int = 0
     for block in func.blocks:
         func_max_addr = max(func_min_addr, block.addr + block.size)
+
+        # ------------------Register name of current Block---------------------
         if block_counter < 16:
             block_name =  f"Block_{str(hex(block_counter)[2:]).upper()}"
         else:
-            block_name = register_name_range(block_counter, basename="Block_Lit")
+            block_name = register_name_range(block_counter, basename="Block")
         block_list.append(
             {
                 block_name: (
@@ -258,6 +260,18 @@ def fill_constant_candidates(
                     elif op.type == 3:  # MEMORY
                         disp = abs(op.mem.disp)
                         scale = op.mem.scale
+                        base = op.mem.base
+                        index = op.mem.index
+                        # Register the base register
+                        if base != 0:
+                            base_reg_name = insn.reg_name(base)
+                            symbol_tokens[base_reg_name] = mnemonic_to_token(base_reg_name)
+                        
+                        # Register the index register
+                        if index != 0:
+                            index_reg_name = insn.reg_name(index)
+                            symbol_tokens[index_reg_name] = mnemonic_to_token(index_reg_name)
+
 
                         # Register the scale as a constant if in expected range
                         if 0x00 <= scale <= 0xFF:
@@ -377,10 +391,6 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
     - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
 
 
-    Immediate: hex value can be value or hex address
-    Memory: hex value MUST be an
-
-
     Opaque Const Metadaten:
     0: {type: Local function, name: fibonacci}
     1: {type: String, value: "Hello World I love u"}
@@ -485,15 +495,13 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
 
         # Name the constants
         value_constant_literals = name_value_constant_literals(
-            value_constant_literals_candidates, "VALUED_CONST_LIT"
+            value_constant_literals_candidates, "VALUED_CONST"
         )
 
         opaque_constants, opaque_constant_literals = name_opaque_constants(
-            sorted_opaque_candidates, "OPAQUE_CONST_LIT"
+            sorted_opaque_candidates, "OPAQUE_CONST"
         )
-        print(opaque_constants)
         
-        print(opaque_const_meta)
         function_addr_range: list[dict[str, tuple[str, str]]] = func_addr_range[
             func_addr
         ]
@@ -505,6 +513,7 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
             opaque_constants=opaque_constants,
             opaque_constant_literals=opaque_constant_literals,
             mnemonics=mnemonics,
+            inv_prefix_tokens=inv_prefix_tokens,
             symbol_tokens=symbol_tokens,
             function_addr_range=function_addr_range,
             block_dict=block_dict,
@@ -521,7 +530,7 @@ def lowlevel_disas(path, cfg, constant_list) -> tuple[
         func_disas[func_name] = temp_bbs
         func_disas_token[func_name] = temp_tk
         func_tokens[func_name] = tokenized_instructions
-        break
+        
     vocab = dict(sorted(vocab.items(), key=lambda item: item[1]))
     for key, value in vocab.items():
         print(f"{key}: {value}")
@@ -558,7 +567,6 @@ def find_function_by_address(address: str, func_map: dict[str, list[str]]) -> st
     return None
 
 
-
 def create_tokenstream(
     temp_bbs,
     renamed_value_constants,
@@ -566,6 +574,7 @@ def create_tokenstream(
     opaque_constants,
     opaque_constant_literals,
     mnemonics,
+    inv_prefix_tokens,
     symbol_tokens,
     function_addr_range,
     block_dict,
@@ -590,6 +599,7 @@ def create_tokenstream(
                 opaque_constants,
                 opaque_constant_literals,
                 mnemonics,
+                inv_prefix_tokens,
                 symbol_tokens,
                 function_addr_range,
             )
@@ -658,6 +668,7 @@ def parse_instruction(
     opaque_constants,
     opaque_constant_literals,
     mnemonics,
+    inv_prefix_tokens,
     symbol_tokens,
     func_addr_range: list,
 ) -> str:
@@ -670,7 +681,7 @@ def parse_instruction(
             'op_str': str,
             'prefixes': list[str]  # e.g., ['x86_lock']
         }
-        renamed_value_constants: dict
+        renamed_value_constants (dict[str, int]): Mapping from address to Tokenname
         value_constant_literals: dict
         opaque_constants: dict
         opaque_constant_literals: dict
@@ -693,7 +704,8 @@ def parse_instruction(
 
     mnemonic = ins_dict[0]
     op_str = ins_dict[1]
-
+    prefixes = ins_dict[2]
+        
     token_lst = []
 
     # Add mnemonic token
@@ -705,15 +717,14 @@ def parse_instruction(
     # Handle operands
     if op_str:
         operand = op_str.split(", ")
-        for i in range(len(operand)):
-            symbols = re.split(r"([0-9A-Za-z_]+)", operand[i])
-            symbols = [s.strip() for s in symbols if s]
-            # print(symbols)
-            processed = []
 
+        for i in range(len(operand)):
+            symbols = re.split(r"([0-9A-Za-z_:]+)", operand[i])
+            symbols = [s.strip() for s in symbols if s]
+            processed = []
             for s in symbols:
                 if (
-                    s.lower() == "ptr"
+                    s.lower() == "ptr" or s.lower() in inv_prefix_tokens.values()
                 ):  # skip token solely reserved to make code more human-readable
                     continue  # skip ptr entirely
                 if s.startswith("0x"):  # hex constants
@@ -738,7 +749,6 @@ def parse_instruction(
                             func_addr_range,
                         )
                     )
-
                 elif s in SIZE_SPECIFIERS.keys():
                     processed.append(SIZE_SPECIFIERS[s])
                 elif s in symbol_tokens:
@@ -747,12 +757,7 @@ def parse_instruction(
                     processed.append(s)
 
             token_lst.extend(processed)
-
     return " ".join(token_lst)
-
-
-def mnemonic_to_token(mnemonic) -> str:
-    return f"x86_{mnemonic.upper()}"
 
 
 def resolve_constant(
@@ -828,15 +833,6 @@ def name_value_constant_literals(
         renamed_dict (dict): Mapping from new constant name to tuple of value constant literal: occurences.
     """
     renamed_dict = {}
-    """for addr, freq in vcl.items():
-        if counter <= 16:
-            new_name = f"VALUED_CONST_LIT_{hex(counter)[2:].upper()}"
-            renamed_dict[addr] = (new_name, freq)
-        else:
-            new_name = register_name_range(counter, base_name)
-            renamed_dict[addr] = (new_name, freq)
-        counter += 1
-    return renamed_dict"""
     for addr, freq in vcl.items():
         new_name = register_name_range(int(addr[2:], 16), base_name)
         renamed_dict[addr] = (new_name, freq)
@@ -1002,6 +998,10 @@ def main():
         for k, v in opaque_constants_meta.items():
             f.write(f"{k}: {v}\n")
 
+    with open("tokenized_disassembly.txt", encoding="utf-8", mode="w") as f:
+        for k, v in disassembly_tokenized.items():
+            f.write(f"{k}: {v}\n")
+
     with open(f"test.txt", encoding="utf-8", mode="w") as f:
         f.write("Function name, assembly\n")
         for (k1, v1), (k2, v2) in zip(
@@ -1019,10 +1019,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    # TODO Literals umbauen --> VALUED_CONST_LIT_Start VALUED_CONST_LIT_E VALUED_CONST_LIT_8 VALUED_CONST_LIT_F VALUED_CONST_LIT_End
-    # --> VALUED_CONST_LIT_Start VALUEV_CONST_E ...
-    # --> im body von den tokenstreams umbauen, dass noch weniger tokens verwendet werden und die schon vorhandenen benutzt werden
 
     # TODO OPAQUE_CONST_META: Pro Function: Da aufsteigend sortiert, bildet die ID den Index ab
     # --> [(start, ende, name, typ)]
