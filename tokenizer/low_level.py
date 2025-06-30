@@ -618,7 +618,7 @@ def lowlevel_disas(path, cfg, constant_list):
         block_runlength_dict[func_name] = block_base64
         insn_runlength_dict[func_name] = insn_base64
         opaque_meta_dict[func_name] = meta_result
-        print(f"{len(func_names)}, {len(token_dict)}, {len(block_runlength_dict)}, {len(insn_runlength_dict)}, {len(opaque_meta_dict)}")
+        #print(f"{len(func_names)}, {len(token_dict)}, {len(block_runlength_dict)}, {len(insn_runlength_dict)}, {len(opaque_meta_dict)}")
 
     return (func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_func_names)
 
@@ -1125,6 +1125,9 @@ def main():
     (func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_map) = lowlevel_disas(file_path, cfg, constants)
 
         
+    print(token_to_instruction(vocab, base64_to_ndarray("KHZkiZGERLA=")))
+
+
     with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(vocab.keys())  # or whatever header you want
