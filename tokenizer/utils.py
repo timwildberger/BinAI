@@ -11,7 +11,7 @@ def register_name_range(id: int, basename: str) -> str:
     Block number > 255: Block_Lit_Start Block_{HEX VALUE} Block_{HEX VALUE} Block_Lit_End"""
     
     id_str = hex(id)[2:].upper()
-    chunks = [id_str[i: i+1] for i in range(0, len(id_str), 1)]
+    chunks = [id_str[i: i+2] for i in range(0, len(id_str), 2)]
     name = f"{basename}_Lit_Start"
     for element in chunks:
         name += f" {basename}_{element}"

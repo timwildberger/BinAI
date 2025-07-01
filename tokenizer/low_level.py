@@ -539,7 +539,7 @@ def lowlevel_disas(path, cfg, constant_list):
         function_addr_range: list[dict[str, tuple[str, str]]] = func_addr_range[
             func_addr
         ]
-
+        #print(temp_bbs)
         temp_tk = create_tokenstream(
             temp_bbs=temp_bbs,
             renamed_value_constants=renamed_value_constants,
@@ -552,7 +552,7 @@ def lowlevel_disas(path, cfg, constant_list):
             function_addr_range=function_addr_range,
             block_dict=block_dict,
         )
-
+        #print(temp_tk)
 
         vocab, tokenized_instructions, block_run_lengths, insn_run_lengths = (
             build_vocab_tokenize_and_index(temp_tk, vocab)
@@ -568,7 +568,7 @@ def lowlevel_disas(path, cfg, constant_list):
         # print(insn_run_lengths)
 
         func_disas[func_name] = temp_bbs
-        #func_disas_token[func_name] = temp_tk
+        func_disas_token[func_name] = temp_tk
         #func_tokens[func_name] = tokenized_instructions
 
 
@@ -613,10 +613,6 @@ def lowlevel_disas(path, cfg, constant_list):
             print(f"Error processing {func_name}: {e}.\nTokenstream: {temp_tk}\nTokens: {tokenized_instructions}\nBlock encoding: {block_run_lengths}\nInstructions: {insn_run_lengths}\nMetaData: {meta_result}")
             raise ValueError
         
-        with open("output_OG.csv", encoding="utf-8", mode="w") as csvfile:
-            writer = csv.writer(csvfile)
-            for k, v in func_disas.items():
-                writer.writerow([f"{k}: {v}"])
         
         func_names.append(func_name)
         token_dict[func_name] = tokens_base64
@@ -624,6 +620,15 @@ def lowlevel_disas(path, cfg, constant_list):
         insn_runlength_dict[func_name] = insn_base64
         opaque_meta_dict[func_name] = meta_result
         #print(f"{len(func_names)}, {len(token_dict)}, {len(block_runlength_dict)}, {len(insn_runlength_dict)}, {len(opaque_meta_dict)}")
+        
+    with open("disassembly.csv", encoding="utf-8", mode="w") as csvfile:
+        writer = csv.writer(csvfile)
+        for k, v in func_disas.items():
+            writer.writerow([f"{k}: {v}"])
+    with open("readable_tokenized_disassembly.csv", encoding="utf-8", mode="w") as csvfile:
+        writer = csv.writer(csvfile)
+        for k, v in func_disas_token.items():
+            writer.writerow([f"{k}: {v}"])
 
     return (func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_func_names)
 
@@ -1119,68 +1124,48 @@ def reverse_tokenization(
     insn_run_lengths: list[int],
     vocab: dict[int, str]
 ) -> list[dict[str, list[str]]]:
-    # Step 2: Split tokenized_instructions into instructions
     instructions = []
+    token_index = 0
+
+    #print(block_run_lengths)
+    #print(insn_run_lengths)
+
+    # Step 1: Convert tokens into instructions
+    for insn_len in insn_run_lengths:
+        insn_tokens = []
+        for _ in range(insn_len):
+            token_id = int(tokenized_instructions[token_index])
+            insn_tokens.append(vocab[token_id])
+            token_index += 1
+        instructions.append(insn_tokens)
+
+    #print(instructions)
+
+    # Step 2: Group instructions into blocks
     block_insns = []
-    print(f"\nTOKENIZED INSTRUCTIONS: {tokenized_instructions}")
-    print(f"BLOCK RUN LENGTHS: {block_run_lengths}")
-    print(f"INSN_RUN_LENGTHS: {insn_run_lengths}")
     
-    global_counter = 0
-    for block in block_run_lengths:
-        block_counter = 0
-        block_insns.append(vocab[int(tokenized_instructions[global_counter])])
-        global_counter += 1
-        while block_counter < int(block):
-            block_insns.append(vocab[int(tokenized_instructions[global_counter])])
-            global_counter += 1
-            block_counter += 1
-        print(block_insns)
-
-
-
-
-
-    for length in insn_run_lengths:
-        length = int(length)
-        end = start + length
-        tokens = tokenized_instructions[start:end].tolist()
-        instructions.append(tokens)
-        start = end
-    
-    print(f"INSTRUCTIONS: {instructions}")
-
-    # Step 3: Convert instructions tokens to strings
-    instructions_text = []
-    for instr_tokens in instructions:
-        tokens = [inv_vocab.get(tid, f"<UNK_{tid}>") for tid in instr_tokens]
-        instructions_text.append(" ".join(tokens))
-    print(f"INSTRUCTIONS TEXT: {instructions_text}")
-
-    # Step 4: Group instructions into blocks by block_run_lengths
-    blocks = []
-    instr_idx = 0
+    insn_index = 0
+    block_index = 0
+    j = 0 # index over all instructions
     for block_len in block_run_lengths:
-        block_len = int(block_len)
-        block_instrs = instructions_text[instr_idx:instr_idx + block_len]
+        i = 0 #index that is being reset for each block
+        block_instrs = []
+        #print(block_len)
+        while i < block_len:
+            block_instrs.append(' '.join(instructions[j]))
+            i += len(instructions[j])
+            #print(f"\t{i}")
+            j += 1
+        block_insns.append({
+            f'Block_{block_index}': block_instrs
+        })
+        block_index += 1
 
-        # Assume first instruction in the block is the block name token(s)
-        # Parse block name from first instruction string (token(s))
-        # This depends on how you encoded block names — assuming first instruction is block name token(s)
-        block_name = block_instrs[0]  # e.g. "Block_1"
-
-        # Rest of the instructions in the block:
-        instrs_in_block = block_instrs[1:]
-
-        blocks.append({block_name: instrs_in_block})
-
-        instr_idx += block_len
-
-    return blocks
+    #print(block_insns)
+    return block_insns
 
 
 def token_to_insn(path: str):
-
     with open(path, newline='') as csvfile:
         reader = csv.reader(csvfile)
         token_dict: dict[str, str] = {}
@@ -1191,7 +1176,7 @@ def token_to_insn(path: str):
                 for element in row:
                     vocab[row_iter] = element
                     row_iter += 1
-                print(vocab)
+                #print(vocab)
             else:
                 #print("\n")
                 index = row[0]
@@ -1214,21 +1199,21 @@ def main():
     
     file_path = "src/curl/x86-clang-3.5-O0_curl"
     # print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
-    """
+    
     project = angr.Project(file_path, auto_load_libs=False)
     constants: dict[str, list[str]] = parse_and_save_data_sections(project)
 
     cfg = project.analyses.CFGFast(normalize=True)
-    disassembly: dict[str, list[dict[str, list[list[str | list[str]]]]]] = {}
-    disassembly_tokenized: dict[str, list[dict[str, list[str]]]] = {}
-    opaque_constants_meta: dict[str, list[str]] = {}
+    #disassembly: dict[str, list[dict[str, list[list[str | list[str]]]]]] = {}
+    #disassembly_tokenized: dict[str, list[dict[str, list[str]]]] = {}
+    #opaque_constants_meta: dict[str, list[str]] = {}
     #disassembly, disassembly_tokenized, opaque_constants_meta, func_tokens = (
     #    lowlevel_disas(file_path, cfg, constants)
     #)
     (func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_map) = lowlevel_disas(file_path, cfg, constants)
     """
     """
-    #token_to_instruction(vocab, base64_to_ndarray("KHZkiZGERLA="))
+    #print(token_to_instruction(vocab, base64_to_ndarray("KHZkiZGERLA=")))
     """
     """
     with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:
@@ -1250,7 +1235,7 @@ def main():
                 opaque_meta_dict[element]
             ]
             writer.writerow(row)
-    """
+    
     token_to_insn("output.csv")
 
 
@@ -1259,3 +1244,4 @@ if __name__ == "__main__":
 
     # TODO nach csv bauen: Reversecheck ob das auch alles wieder korrekt aufgelöst wird
     # TODO proper placeholder for unresolvable opaque constants
+    # TODO bei VALUED_CONST_{} immer zwei stellen bitte also 0F statt F
