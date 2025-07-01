@@ -1,5 +1,7 @@
 import angr
 import re
+import sys
+import filecmp
 import csv, json
 from pathlib import Path
 from address_meta_data_lookup import AddressMetaDataLookup
@@ -558,7 +560,7 @@ def lowlevel_disas(path, cfg, constant_list):
             build_vocab_tokenize_and_index(temp_tk, vocab)
         )
         if len(tokenized_instructions) == 0:
-            print(f"{func_name} has no instructions.")
+            #print(f"{func_name} has no instructions.")
             continue
         
         # print(f"Token stream: {temp_tk}")
@@ -621,11 +623,11 @@ def lowlevel_disas(path, cfg, constant_list):
         opaque_meta_dict[func_name] = meta_result
         #print(f"{len(func_names)}, {len(token_dict)}, {len(block_runlength_dict)}, {len(insn_runlength_dict)}, {len(opaque_meta_dict)}")
         
-    with open("disassembly.csv", encoding="utf-8", mode="w") as csvfile:
+    with open("disassembly.csv", encoding="utf-8", mode="w", newline='') as csvfile:
         writer = csv.writer(csvfile)
         for k, v in func_disas.items():
             writer.writerow([f"{k}: {v}"])
-    with open("readable_tokenized_disassembly.csv", encoding="utf-8", mode="w") as csvfile:
+    with open("readable_tokenized_disassembly.csv", encoding="utf-8", mode="w", newline='') as csvfile:
         writer = csv.writer(csvfile)
         for k, v in func_disas_token.items():
             writer.writerow([f"{k}: {v}"])
@@ -741,7 +743,8 @@ def create_tokenstream(
                 symbol_tokens,
                 function_addr_range,
             )
-            token_list.append(block_token_stream)
+            
+            token_list.append(re.sub(r'\s{2,}', ' ', block_token_stream))
         temp_tk.append({block_dict[block_code_addr]: token_list})
     return temp_tk
 
@@ -1156,9 +1159,14 @@ def reverse_tokenization(
             i += len(instructions[j])
             #print(f"\t{i}")
             j += 1
-        block_insns.append({
-            f'Block_{block_index}': block_instrs
-        })
+        if block_index < 16:
+            block_insns.append({
+                f'Block_{hex(block_index)[2:].upper()}': block_instrs
+            })
+        else:
+            block_insns.append({
+                f'{register_name_range(block_index, basename="Block")}': block_instrs
+            })
         block_index += 1
 
     #print(block_insns)
@@ -1193,10 +1201,35 @@ def token_to_insn(path: str):
             writer.writerow([f"{k}: {v}"])
 
 
-    # TODO Tokenized instructions does not contain a 0
+def compare_csv_files(file1: str, file2: str):
+    # Increase CSV field size limit
+    csv.field_size_limit(10_000_000)
+
+    with open(file1, newline='', encoding='utf-8') as f1, open(file2, newline='', encoding='utf-8') as f2:
+        reader1 = csv.reader(f1)
+        reader2 = csv.reader(f2)
+
+        line_num = 1
+        for row1, row2 in zip(reader1, reader2):
+            if row1 != row2:
+                print(f"Mismatch at line {line_num}:")
+                print(f"  {file1}: {row1}")
+                print(f"  {file2}: {row2}")
+                raise ValueError
+            line_num += 1
+
+        for row in reader1:
+            print(f"Extra line in {file1} at line {line_num}: {row}")
+            line_num += 1
+
+        for row in reader2:
+            print(f"Extra line in {file2} at line {line_num}: {row}")
+            line_num += 1
 
 def main():
-    
+    print(filecmp.cmp("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv", shallow=False))
+    return
+     
     file_path = "src/curl/x86-clang-3.5-O0_curl"
     # print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
     
@@ -1211,6 +1244,7 @@ def main():
     #    lowlevel_disas(file_path, cfg, constants)
     #)
     (func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_map) = lowlevel_disas(file_path, cfg, constants)
+    print(vocab)
     """
     """
     #print(token_to_instruction(vocab, base64_to_ndarray("KHZkiZGERLA=")))
@@ -1237,7 +1271,7 @@ def main():
             writer.writerow(row)
     
     token_to_insn("output.csv")
-
+    compare_csv_files("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv")    
 
 if __name__ == "__main__":
     main()
