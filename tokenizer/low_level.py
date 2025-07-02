@@ -71,6 +71,10 @@ def fill_constant_candidates(
     func: angr.knowledge_plugins.functions.function.Function,
     arithmetic_instructions: set[str],
     addressing_control_flow_instructions: set[str],
+    string_instructions,
+    bit_manipulation_instructions,
+    floating_point_instructions,
+    system_instructions,
     inv_prefix_tokens: dict[str, str],
     constant_dict: dict[str, list[str]],
     opaque_const_meta: dict[str, list[str]],
@@ -451,6 +455,10 @@ def lowlevel_disas(path, cfg, constant_list):
     addressing_control_flow_instructions: set = set(
         data["addressing_control_flow_instructions"]
     )
+    string_instructions: set = set(data["string_instructions"])
+    bit_manipulation_instructions: set = set(data["bit_manipulation_instructions"])
+    floating_point_instructions: set = set(data["floating_point_instructions"])
+    system_instructions: set = set(data["system_instructions"])
     inv_prefix_tokens: dict[str, str] = data["inv_prefix_tokens"]
 
     # Get .text section size
@@ -488,6 +496,10 @@ def lowlevel_disas(path, cfg, constant_list):
             func=func,
             arithmetic_instructions=arithmetic_instructions,
             addressing_control_flow_instructions=addressing_control_flow_instructions,
+            string_instructions=string_instructions,
+            bit_manipulation_instructions=bit_manipulation_instructions,
+            floating_point_instructions=floating_point_instructions,
+            system_instructions=system_instructions,
             inv_prefix_tokens=inv_prefix_tokens,
             constant_dict=constant_list,
             opaque_const_meta=opaque_const_meta,
@@ -607,30 +619,6 @@ def lowlevel_disas(path, cfg, constant_list):
                 duplicate_func_names[new_name] = func_name  # mapping duplicate->original
                 func_name = new_name
                 seen.add(func_name)
-                
-                """for func_addr_2, func in cfg.functions.items():
-                    if cfg.functions[func_addr_2].name == func_name:
-                        print(f"OLD: {func_addr_2}")
-                        print(f"NEW: {func_addr}")
-                        raise ValueError
-                index = func_names[func_names.index(func_name)]
-                print(f"OLD: {func_name_addr[index]}")
-                print(f"NEW: {func_addr}")
-
-
-                if not (token_dict[index] == tokens_base64 and block_runlength_dict[index] == block_base64 and insn_runlength_dict[index] == insn_base64):
-                    print(f"THERE IS A FORBIDDEN DUPLICATE!")
-                    print(f"OG: {token_dict[index]}\nNEW: {tokens_base64}")
-                    print(f"OG: {base64_to_ndarray(token_dict[index])}\nNEW: {base64_to_ndarray(tokens_base64)}")
-                    print("INSTRUCTIONS")
-
-                    old = token_to_instruction(vocab, base64_to_ndarray(token_dict[index]))
-                    new = token_to_instruction(vocab, base64_to_ndarray(tokens_base64))
-                    assert new == old
-
-                    raise ValueError
-                else:
-                    continue"""
         except Exception as e:
             print(f"Error processing {func_name}: {e}.\nTokenstream: {temp_tk}\nTokens: {tokenized_instructions}\nBlock encoding: {block_run_lengths}\nInstructions: {insn_run_lengths}\nMetaData: {meta_result}")
             raise ValueError
@@ -650,7 +638,7 @@ def lowlevel_disas(path, cfg, constant_list):
     with open("readable_tokenized_disassembly.csv", encoding="utf-8", mode="w", newline='') as csvfile:
         writer = csv.writer(csvfile)
         for k, v in func_disas_token.items():
-            writer.writerow([f"{k}: {v}"])
+            writer.writerow([k, v])
 
     save_pickles(func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_func_names, tokenized_instructions, block_run_lengths, insn_run_lengths, meta_result)
 
@@ -946,6 +934,38 @@ def parse_instruction(
         operand = op_str.split(", ")
 
         for i in range(len(operand)):
+            current_operand = operand[i]
+
+            # Handle ljmp-style segment:offset operands (e.g., "0x9c23:0xeaafaf45")
+            if ":" in current_operand and all(part.startswith("0x") for part in current_operand.split(":")):
+                segment, offset = current_operand.split(":")
+
+                try:
+                    seg_val = resolve_constant(
+                        segment,
+                        renamed_value_constants,
+                        value_constant_literals,
+                        opaque_constants,
+                        opaque_constant_literals,
+                        func_addr_range,
+                    )
+                    off_val = resolve_constant(
+                        offset,
+                        renamed_value_constants,
+                        value_constant_literals,
+                        opaque_constants,
+                        opaque_constant_literals,
+                        func_addr_range,
+                    )
+                except:
+                    print(f"{mnemonic}, {op_str}")
+                    raise ValueError
+
+                processed = [seg_val, ":", off_val]  # Keep ":" as is or replace if needed
+                token_lst.extend(processed)
+                continue  # Skip rest of loop, already handled
+            
+
             symbols = re.split(r"([0-9A-Za-z_:]+)", operand[i])
             symbols = [s.strip() for s in symbols if s]
             processed = []
@@ -955,8 +975,8 @@ def parse_instruction(
                 ):  # skip token solely reserved to make code more human-readable
                     continue  # skip ptr entirely
                 if s.startswith("0x"):  # hex constants
-                    processed.append(
-                        resolve_constant(
+                    try:
+                        v = resolve_constant(
                             s,
                             renamed_value_constants,
                             value_constant_literals,
@@ -964,10 +984,13 @@ def parse_instruction(
                             opaque_constant_literals,
                             func_addr_range,
                         )
-                    )
+                    except:
+                        print(f"{mnemonic}, {op_str}")
+                        raise ValueError
+                    processed.append(v)
                 elif s.isdigit():  # byte constants
-                    processed.append(
-                        resolve_constant(
+                    try:
+                        v = resolve_constant(
                             hex(int(s)),
                             renamed_value_constants,
                             value_constant_literals,
@@ -975,7 +998,11 @@ def parse_instruction(
                             opaque_constant_literals,
                             func_addr_range,
                         )
-                    )
+                    except:
+                        print(f"{mnemonic}, {op_str}")
+                        raise ValueError        
+                    
+                    processed.append(v)
                 elif s in SIZE_SPECIFIERS.keys():
                     processed.append(SIZE_SPECIFIERS[s])
                 elif s in symbol_tokens:
@@ -1010,8 +1037,12 @@ def resolve_constant(
     """
     for element in func_addr_range:
         for block_nr, bounds in element.items():
-            if int(bounds[0], 16) <= int(s, 16) < int(bounds[1], 16):
-                return block_nr
+            try:
+                if int(bounds[0], 16) <= int(s, 16) < int(bounds[1], 16):
+                    return block_nr
+            except:
+                print(s)
+                raise ValueError
     return (
         renamed_value_constants.get(s, [None])[0]
         or value_constant_literals.get(s, [None])[0]
@@ -1214,15 +1245,16 @@ def reverse_tokenization(
 ) -> list[dict[str, list[str]]]:
     instructions = []
     token_index = 0
-
-    #print(block_run_lengths)
-    #print(insn_run_lengths)
-
     # Step 1: Convert tokens into instructions
     for insn_len in insn_run_lengths:
         insn_tokens = []
+        
         for _ in range(insn_len):
             token_id = int(tokenized_instructions[token_index])
+            """if vocab[token_id] == "VALUED_CONST_34":
+                print(f"token_id={token_id}, token={vocab[token_id]}")
+                print(f"Tokenized instructions: {tokenized_instructions}")
+                return None"""
             insn_tokens.append(vocab[token_id])
             token_index += 1
         instructions.append(insn_tokens)
@@ -1269,15 +1301,17 @@ def token_to_insn(path: str):
                 for element in row:
                     vocab[row_iter] = element
                     row_iter += 1
-                #print(vocab)
+                print(vocab)
             else:
                 #print("\n")
                 index = row[0]
+                
                 tokens = base64_to_ndarray(row[1])
                 block_runlength = base64_to_ndarray(row[2])
                 insn_runlength = base64_to_ndarray(row[3])
                 string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
                 token_dict[index] = string_stream
+            
     
     with open("reconstructed_disassembly.csv", mode="w", newline='', encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
@@ -1356,7 +1390,7 @@ def csv_to_dict(filepath):
 
 def main():
     print(f"STARTING DISASSEMBLY")
-    file_path = "src/z3/x86-clang-3.5-O2_z3"
+    file_path = "src/clamav/x86-gcc-4.8-Os_freshclam"
     project = angr.Project(file_path, auto_load_libs=False)
     constants: dict[str, list[str]] = parse_and_save_data_sections(project)
     cfg = project.analyses.CFGFast(normalize=True)
@@ -1394,15 +1428,17 @@ def main():
     insn_runlength = csv_to_dict("output_meta/insn_runlength_dict.csv")
     tokens = csv_to_dict("output_meta/token_dict.csv")
     duplicate_map = csv_to_dict("output_meta/duplicate_func_names.csv")
-    datastructures_to_insn(vocab=vocab, block_runlength_dict=block_run_length, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
+    #datastructures_to_insn(vocab=vocab, block_runlength_dict=block_run_length, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
     token_to_insn("output.csv")
-    compare_csv_files("reconstructed_disassembly_test.csv", "reconstructed_disassembly.csv")
-    print(f"Output and reconstruction equal? {filecmp.cmp("reconstructed_disassembly_test.csv", "reconstructed_disassembly.csv", shallow=False)}")
+    compare_csv_files("reconstructed_disassembly.csv", "readable_tokenized_disassembly.csv")
+    #compare_csv_files("reconstructed_disassembly_test.csv", "readable_tokenized_disassembly.csv")
+
+    #print(f"Output and reconstruction equal? {filecmp.cmp("reconstructed_disassembly_test.csv", "reconstructed_disassembly.csv", shallow=False)}")
 
 
 
     """func_names = result["func_names.pkl"]
-    token_dict = result["token_dict.pkl"]
+    token_dict = result["token_dict.pkl"]readable_tokenized_disassembly.csv
     block_runlength_dict = result["block_runlength_dict.pkl"]
     insn_runlength_dict = result["insn_runlength_dict.pkl"]
     opaque_meta_dict = result["opaque_meta_dict.pkl"]
@@ -1418,9 +1454,9 @@ def main():
     
     
     
-    token_to_insn("output.csv")
-    compare_csv_files("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv")    
-    print(filecmp.cmp("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv", shallow=False))
+    #token_to_insn("output.csv")
+    #compare_csv_files("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv")    
+    #print(filecmp.cmp("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv", shallow=False))
 
 if __name__ == "__main__":
     main()
