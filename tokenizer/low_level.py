@@ -1,7 +1,8 @@
 import angr
 import re
-import sys
+import pickle
 import filecmp
+import os
 import csv, json
 from pathlib import Path
 from address_meta_data_lookup import AddressMetaDataLookup
@@ -259,12 +260,31 @@ def fill_constant_candidates(
                                         )
                                 else:  # Fallback
                                     if hex(imm_val) not in opaque_const_meta:
-                                        opaque_const_meta_list[hex(imm_val)] = hex(imm_val), hex(meta["end_addr"]), (meta["name"], meta["type"], meta.get("library", "unknown"))
+                                        meta, kind = lookup.lookup(imm_val)
+                                        if meta is None:
+                                                # Default/fallback meta if lookup fails
+                                                meta = {
+                                                    "start_addr": imm_val,
+                                                    "end_addr": imm_val,
+                                                    "name": "unknown",
+                                                    "type": "unknown",
+                                                    "library": "unknown",
+                                                }
+
+
+                                        opaque_const_meta_list[hex(imm_val)] = (
+                                            hex(meta["start_addr"]),
+                                            hex(meta["end_addr"]),
+                                            meta["name"],
+                                            meta["type"],
+                                            meta.get("library", "unknown"),
+                                        )
                                         opaque_const_meta[hex(meta["start_addr"])] = [
-                                                    meta["name"],
-                                                    hex(meta["end_addr"]),
-                                                    meta["type"],
-                                                ]
+                                            meta["name"],
+                                            hex(meta["end_addr"]),
+                                            meta["type"],
+                                            meta.get("library", "unknown"),
+                                        ]
                                     opaque_candidates = register_value_in_dict(
                                         opaque_candidates, hex(imm_val)
                                     )
@@ -632,7 +652,72 @@ def lowlevel_disas(path, cfg, constant_list):
         for k, v in func_disas_token.items():
             writer.writerow([f"{k}: {v}"])
 
+    save_pickles(func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_func_names, tokenized_instructions, block_run_lengths, insn_run_lengths, meta_result)
+
+    
+
     return (func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_func_names)
+
+
+def load_all_pickles(*file_paths):
+    all_data = {}
+
+    for file_path in file_paths:
+        with open(file_path, "rb") as f:
+            data = pickle.load(f)
+
+        key = os.path.splitext(os.path.basename(file_path))[0]
+        all_data[key] = data
+
+        if key == "insn_runlength_dict":
+            print("Data for insn_runlength_dict loaded:")
+            #print(data)
+            print(f"Type of data: {type(data)}")
+            print(f"Number of items: {len(data) if hasattr(data, '__len__') else 'N/A'}")
+
+        new_filename = f"output_meta/{key}.csv"
+        print(f"Writing to: {new_filename}")
+
+        try:
+            with open(new_filename, "w", newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        writer.writerow([k, v])
+
+                elif isinstance(data, list):
+                    if key == "insn_runlength_dict":
+                        print(data)
+                    for item in data:
+                        writer.writerow([item])
+
+                elif isinstance(data, np.ndarray):
+                    np.savetxt(csvfile, data, delimiter=",", fmt="%s")
+
+                else:
+                    writer.writerow([str(data)])
+        except Exception as e:
+            print(f"❌ Failed to write {new_filename}: {e}")
+
+    return all_data
+
+def save_pickles(
+    func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_func_names, tokenized_instructions, block_run_lengths, insn_run_lengths, meta_result
+):
+    filenames = [
+        "func_names.pkl", "token_dict.pkl", "block_runlength_dict.pkl", "insn_runlength_dict.pkl", 
+        "opaque_meta_dict.pkl", "vocab.pkl", "duplicate_func_names.pkl", 
+        "tokenized_instructions.pkl", "block_run_lengths.pkl", "insn_run_lengths.pkl", "meta_result.pkl"
+    ]
+    
+    variables = [
+        func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_func_names, tokenized_instructions, block_run_lengths, insn_run_lengths, meta_result
+    ]
+    
+    for filename, variable in zip(filenames, variables):
+        with open(filename, "wb") as f:
+            pickle.dump(variable, f)
+
 
 def token_to_instruction(vocab, tokenstream):
     insn = []
@@ -1188,17 +1273,46 @@ def token_to_insn(path: str):
             else:
                 #print("\n")
                 index = row[0]
-                #print(row[1])
                 tokens = base64_to_ndarray(row[1])
                 block_runlength = base64_to_ndarray(row[2])
                 insn_runlength = base64_to_ndarray(row[3])
                 string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
                 token_dict[index] = string_stream
     
-    with open("reconstructed_disassembly.csv", newline="", mode="w") as csvfile:
-        writer = csv.writer(csvfile)
+    with open("reconstructed_disassembly.csv", mode="w", newline='', encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
         for k, v in token_dict.items():
-            writer.writerow([f"{k}: {v}"])
+            writer.writerow([k, v])
+
+def datastructures_to_insn(vocab: dict[int, str],
+                  token_dict: dict[str, str],
+                  block_runlength_dict: dict[str, str],
+                  insn_runlength_dict: dict[str, str],
+                  duplicate_map: dict[str, str]):
+
+    reconstructed: dict[str, str] = {}
+    vocab = {v: k for k, v in vocab.items()}
+
+    for index in token_dict:
+        try:
+            # Resolve duplicates (use original name if it's a duplicate)
+            original_index = duplicate_map.get(index, index)
+
+            tokens = base64_to_ndarray(token_dict[index])
+            block_runlength = base64_to_ndarray(block_runlength_dict[index])
+            insn_runlength = base64_to_ndarray(insn_runlength_dict[index])
+
+            string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
+            reconstructed[original_index] = string_stream
+
+        except Exception as e:
+            print(f"❌ Failed to process index {index}: {e}")
+
+    # Write the result to a CSV
+    with open("reconstructed_disassembly_test.csv", mode="w", newline='', encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
+        for k, v in reconstructed.items():
+            writer.writerow([k, v])
 
 
 def compare_csv_files(file1: str, file2: str):
@@ -1226,30 +1340,29 @@ def compare_csv_files(file1: str, file2: str):
             print(f"Extra line in {file2} at line {line_num}: {row}")
             line_num += 1
 
+def csv_to_dict(filepath):
+    result = {}
+    with open(filepath, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if len(row) != 2:
+                continue  # skip malformed lines
+            key, value = row[0].strip(), row[1].strip()
+            try:
+                result[key] = int(value)
+            except ValueError:
+                result[key] = value  # fallback if not int
+    return result
+
 def main():
-    print(filecmp.cmp("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv", shallow=False))
-    return
-     
-    file_path = "src/curl/x86-clang-3.5-O0_curl"
-    # print(extract_ldis_blocks_from_file("out\\clamav\\x86-gcc-4.8-Os_clambc\\x86-gcc-4.8-Os_clambc_functions.csv"))
-    
+    print(f"STARTING DISASSEMBLY")
+    file_path = "src/z3/x86-clang-3.5-O2_z3"
     project = angr.Project(file_path, auto_load_libs=False)
     constants: dict[str, list[str]] = parse_and_save_data_sections(project)
-
     cfg = project.analyses.CFGFast(normalize=True)
-    #disassembly: dict[str, list[dict[str, list[list[str | list[str]]]]]] = {}
-    #disassembly_tokenized: dict[str, list[dict[str, list[str]]]] = {}
-    #opaque_constants_meta: dict[str, list[str]] = {}
-    #disassembly, disassembly_tokenized, opaque_constants_meta, func_tokens = (
-    #    lowlevel_disas(file_path, cfg, constants)
-    #)
     (func_names, token_dict, block_runlength_dict, insn_runlength_dict, opaque_meta_dict, vocab, duplicate_map) = lowlevel_disas(file_path, cfg, constants)
-    print(vocab)
-    """
-    """
-    #print(token_to_instruction(vocab, base64_to_ndarray("KHZkiZGERLA=")))
-    """
-    """
+
+    print(f"WRITING OUTPUT")
     with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(vocab.keys())  # or whatever header you want
@@ -1269,9 +1382,45 @@ def main():
                 opaque_meta_dict[element]
             ]
             writer.writerow(row)
+
+    print("VERIFY OUTPUT")
+    result = load_all_pickles(
+        "func_names.pkl", "token_dict.pkl", "block_runlength_dict.pkl", "insn_runlength_dict.pkl", 
+        "opaque_meta_dict.pkl", "vocab.pkl", "duplicate_func_names.pkl", "tokenized_instructions.pkl", 
+        "block_run_lengths.pkl", "insn_run_lengths.pkl", "meta_result.pkl"
+    )
+    vocab = csv_to_dict("output_meta/vocab.csv")
+    block_run_length= csv_to_dict("output_meta/block_runlength_dict.csv")
+    insn_runlength = csv_to_dict("output_meta/insn_runlength_dict.csv")
+    tokens = csv_to_dict("output_meta/token_dict.csv")
+    duplicate_map = csv_to_dict("output_meta/duplicate_func_names.csv")
+    datastructures_to_insn(vocab=vocab, block_runlength_dict=block_run_length, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
+    token_to_insn("output.csv")
+    compare_csv_files("reconstructed_disassembly_test.csv", "reconstructed_disassembly.csv")
+    print(f"Output and reconstruction equal? {filecmp.cmp("reconstructed_disassembly_test.csv", "reconstructed_disassembly.csv", shallow=False)}")
+
+
+
+    """func_names = result["func_names.pkl"]
+    token_dict = result["token_dict.pkl"]
+    block_runlength_dict = result["block_runlength_dict.pkl"]
+    insn_runlength_dict = result["insn_runlength_dict.pkl"]
+    opaque_meta_dict = result["opaque_meta_dict.pkl"]
+    vocab = result["vocab.pkl"]
+    duplicate_func_names = result["duplicate_func_names.pkl"]
+    tokenized_instructions = result["tokenized_instructions.pkl"]
+    block_run_lengths = result["block_run_lengths.pkl"]
+    insn_run_lengths = result["insn_run_lengths.pkl"]
+    meta_result = result["meta_result.pkl"]"""
+    
+   
+    
+    
+    
     
     token_to_insn("output.csv")
     compare_csv_files("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv")    
+    print(filecmp.cmp("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv", shallow=False))
 
 if __name__ == "__main__":
     main()
