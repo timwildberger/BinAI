@@ -1390,7 +1390,7 @@ def csv_to_dict(filepath):
 
 def main():
     print(f"STARTING DISASSEMBLY")
-    file_path = "src/clamav/x86-gcc-4.8-Os_freshclam"
+    file_path = "src/clamav/x86-clang-5.0-O1_sigtool"
     project = angr.Project(file_path, auto_load_libs=False)
     constants: dict[str, list[str]] = parse_and_save_data_sections(project)
     cfg = project.analyses.CFGFast(normalize=True)
