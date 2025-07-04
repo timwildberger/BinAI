@@ -103,7 +103,7 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
 
     # Process displacement
     if not has_disp:
-        #ignore
+        1 # noop ignore
     elif disp <= 0xFF: # if we are in range 00 to 0xFF we always use constant, same if we are negative as its defo not an addr
         tokens.append(vocab_manager.Valued_Const(abs(disp)))
 

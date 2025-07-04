@@ -7,6 +7,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from address_meta_data_lookup import AddressMetaDataLookup
 from compact_base64_utils import ndarray_to_base64
+from tokenizer.compact_base64_utils import base64_to_ndarray_vec
 from tokenizer.csv_files import parse_and_save_data_sections, token_to_insn, compare_csv_files, csv_to_dict
 from tokenizer.make_name import name_opaque_constants, name_value_constant_literals, name_value_constants
 from tokenizer.op_imm_mem import tokenize_operand_memory, tokenize_operand_immediate
@@ -381,6 +382,12 @@ def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg
             tokens_base64 = ndarray_to_base64(tokenized_instructions)
             block_base64 = ndarray_to_base64(block_run_lengths)
             insn_base64 = ndarray_to_base64(insn_run_lengths)
+            assert np.all(base64_to_ndarray_vec(tokens_base64) == tokenized_instructions), "Base64 conversion failed for tokens"
+            assert np.all(base64_to_ndarray_vec(block_base64) == block_run_lengths), "Base64 conversion failed for block run lengths"
+            assert np.all(base64_to_ndarray_vec(insn_base64) == insn_run_lengths), "Base64 conversion failed for instruction run lengths"
+
+            if func_name == "mkdir":
+                print("DEBUGGING MKDIR")
 
             if func_name in func_names:
                 i = 1
