@@ -19,11 +19,16 @@ size_map = {
     2: "word_ptr",
     4: "dword_ptr",
     8: "qword_ptr",
-   10: "xword_ptr",
+   10: "xword_ptr",        # x87 extended precision (80-bit)
+   14: "fpu_env_ptr",      # x87 environment (16-bit mode)
    16: "xmmword_ptr",
+   28: "fpu_env_ptr",      # x87 environment (32-bit mode) - ADD THIS
    32: "ymmword_ptr",
    64: "zmmword_ptr",
+   94: "fpu_state_ptr",    # x87 state (16-bit mode)
+   108: "fpu_state_ptr",   # x87 state (32-bit mode)
 }
+
 segment_prefixes = {
     0x26: "es:",
     0x2E: "cs:",
@@ -83,11 +88,12 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
     # Process scale as a constant if in expected range
     if scale != 1:
         assert scale > 0
-        if not has_index:
+        if has_index:
+            tokens.append(vocab_manager.MemoryOperand(MemoryOperandSymbol.MULTIPLY))
+            tokens.append(vocab_manager.Valued_Const(abs(scale)))
+        else:
             warnings.warn(f"Scale {scale} used without index register in instruction {insn}")
 
-        tokens.append(vocab_manager.MemoryOperand(MemoryOperandSymbol.MULTIPLY))
-        tokens.append(vocab_manager.Valued_Const(abs(scale)))
 
     if disp < 0:
         tokens.append(vocab_manager.MemoryOperand(MemoryOperandSymbol.MINUS))
@@ -96,7 +102,9 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
 
 
     # Process displacement
-    if disp <= 0xFF: # if we are in range 00 to 0xFF we always use constant, same if we are negative as its defo not an addr
+    if not has_disp:
+        #ignore
+    elif disp <= 0xFF: # if we are in range 00 to 0xFF we always use constant, same if we are negative as its defo not an addr
         tokens.append(vocab_manager.Valued_Const(abs(disp)))
 
     else:
