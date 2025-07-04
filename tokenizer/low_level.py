@@ -527,7 +527,7 @@ def build_vocab_tokenize_and_index(blocks: list[list[list[Tokens]]]) -> (npt.NDA
 
 def main():
     print(f"STARTING DISASSEMBLY")
-    file_path = Path("../src/clamav/x86-gcc-5-O3_minigzipsh").absolute()
+    file_path = Path("../src/clamav/x86-clang-5.0-O1_sigtool").absolute()
     pickle_file_path = file_path.parent / f"{file_path.name}.pkl"
     pickle_mainloop_file_path = file_path.parent / f"{file_path.name}.mainloop.pkl"
     with_pickled = False

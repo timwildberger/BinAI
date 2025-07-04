@@ -148,7 +148,7 @@ class VocabularyManager:
             return self.token_to_id[token]
 
         assert (not (token.startswith("Block") or token.startswith("OPAQUE_CONST"))) or \
-               (token[-2] == '_' or "Lit" in token), \
+               (token[-2] == '_' or "Lit" in token or token == "Block_Def"), \
             f"Warning: two digit token thats shouldnt: {token}"
 
         # Add new token
