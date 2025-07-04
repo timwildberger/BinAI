@@ -82,8 +82,10 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
 
     # Process scale as a constant if in expected range
     if scale != 1:
-        assert has_index, "Scale should only be used with an index register? right?"
         assert scale > 0
+        if not has_index:
+            warnings.warn(f"Scale {scale} used without index register in instruction {insn}")
+
         tokens.append(vocab_manager.MemoryOperand(MemoryOperandSymbol.MULTIPLY))
         tokens.append(vocab_manager.Valued_Const(abs(scale)))
 
