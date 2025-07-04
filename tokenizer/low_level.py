@@ -2,6 +2,7 @@ import angr
 import re
 import pickle
 import csv, json
+import time
 from pathlib import Path
 from dataclasses import dataclass
 from address_meta_data_lookup import AddressMetaDataLookup
@@ -531,6 +532,7 @@ def main():
     pickle_file_path = file_path.parent / f"{file_path.name}.pkl"
     pickle_mainloop_file_path = file_path.parent / f"{file_path.name}.mainloop.pkl"
     with_pickled = False
+    start_time = time.time()
     if pickle_mainloop_file_path.exists():
         print("loading existing mainloop pickle to speed up")
         with open(pickle_mainloop_file_path, "rb") as f:
@@ -538,21 +540,31 @@ def main():
             if "path" not in kvargs:
                 kvargs["path"] = file_path
             with_pickled = True
+        print(f"Pickle loading time: {time.time() - start_time:.2f} seconds")
     elif pickle_file_path.exists():
         print("loading existing pickle to speed up")
         with open(pickle_file_path, "rb") as f:
             kvargs = pickle.load(f)
+
+        print(f"Pickle loading time: {time.time() - start_time:.2f} seconds")
     else:
         project = angr.Project(file_path, auto_load_libs=False)  # was False
         constants: dict[str, list[str]] = parse_and_save_data_sections(project)
         cfg = project.analyses.CFGFast(normalize=True)
 
         kvargs = dict(project=project, path=file_path, cfg=cfg, constant_list=constants)
+        print(f"Preparation stage 1 time: {time.time() - start_time:.2f} seconds")
+        start_time = time.time()
         with open(pickle_file_path, "wb") as f:
             pickle.dump(kvargs, f)
 
+        print(f"Pickle (prep only) saving time: {time.time() - start_time:.2f} seconds")
+
+    start_time = time.time()
     print(f"calling lowlevel_disas")
     (func_names, duplicate_func_names, function_data_dict, vocab_manager) = lowlevel_disas(with_pickled=with_pickled, **kvargs)
+    disassembly_time = time.time() - start_time
+    print(f"Disassembly time: {disassembly_time:.2f} seconds")
 
     print(f"WRITING OUTPUT")
     with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:

@@ -1,3 +1,5 @@
+import warnings
+
 from tokenizer.constant_handler import ConstantHandler
 from typing import List
 
@@ -16,7 +18,11 @@ size_map = {
     1: "byte_ptr",
     2: "word_ptr",
     4: "dword_ptr",
-    8: "qword_ptr"
+    8: "qword_ptr",
+   10: "xword_ptr",
+   16: "xmmword_ptr",
+   32: "ymmword_ptr",
+   64: "zmmword_ptr",
 }
 segment_prefixes = {
     0x26: "es:",
@@ -50,8 +56,15 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
     has_index = op.mem.index != 0
     has_disp = op.mem.disp != 0
 
+    if op.size in size_map:
+        tokens.append(vocab_manager.PlatformToken(size_map[op.size]))
+    else:
+        # Find the next bigger size in size_map or take the largest available
+        next_size = min((s for s in size_map if s > op.size), default=max(size_map))
+        tokens.append(vocab_manager.PlatformToken(size_map[next_size]))
+        warnings.warn(f"unexpected memory operand size: {op.size}, using next bigger '{size_map[next_size]}' at {next_size}bytes for instruction {insn}")
 
-    tokens.append(vocab_manager.PlatformToken(size_map[op.size]))
+
     if op.mem.segment > 0:
         tokens.append(vocab_manager.PlatformToken(f"{insn.reg_name(op.mem.segment)}:"))
 
