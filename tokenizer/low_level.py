@@ -12,7 +12,7 @@ from tokenizer.csv_files import parse_and_save_data_sections, token_to_insn, com
 from tokenizer.make_name import name_opaque_constants, name_value_constant_literals, name_value_constants
 from tokenizer.op_imm_mem import tokenize_operand_memory, tokenize_operand_immediate
 from tokenizer.pickles import load_all_pickles, save_pickles
-from tokenizer.tokens import VocabularyManager, TokenResolver, Tokens
+from tokenizer.tokens import VocabularyManager, TokenResolver, Tokens, BlockToken
 from tokenizer.constant_handler import ConstantHandler
 from typing import Union, Optional
 from tqdm import tqdm
@@ -23,6 +23,7 @@ import numpy.typing as npt
 @dataclass
 class FunctionData:
     """Consolidated data structure for function analysis results"""
+    tokens: list[Tokens] #todo for debugging, this probably will use much much memory
     tokens_base64: str
     block_runlength_base64: str
     instruction_runlength_base64: str
@@ -67,12 +68,10 @@ def fill_constant_candidates(
         vocab_manager: VocabularyManager,
 ) -> Optional[
     tuple[
-        list[dict[str, list[list[Union[str, list[str]]]]]],
-        list[dict],
-        dict[str, Tokens],
-        dict[str, Tokens],
-        dict[str, Tokens],
-        ConstantHandler,
+        list[tuple[str, list[list[Tokens]]]], # temp_bbs
+        list[dict[BlockToken, tuple[str, str]]], # block_list
+        dict[str, BlockToken], # block_dict
+        ConstantHandler
     ]
 ]:
     """
@@ -96,9 +95,9 @@ def fill_constant_candidates(
 
     # Create constant handler for this function
     constant_handler = ConstantHandler(vocab_manager, resolver, constant_dict)
-    temp_bbs: list[dict[str, list[list[Union[str, list[str]]]]]] = []
-    block_list: list[dict[Tokens, tuple[str, str]]] = []
-    block_dict: dict[str, Tokens] = {}  # hex value of Block address: block_token
+    temp_bbs: list[tuple[str, list[list[Tokens]]]] = []
+    block_list: list[dict[BlockToken, tuple[str, str]]] = []
+    block_dict: dict[str, BlockToken] = {}  # hex value of Block address: block_token
 
     if sum(1 for _ in func.blocks) == 1 and next(func.blocks).capstone.insns is None:
         return None
@@ -355,6 +354,9 @@ def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg
             block_list, key=lambda d: list(d.values())[0][0]
         )
 
+        if func_name == "mkdir":
+            print("DEBUGGING MKDIR")
+
         # Create mapping from old opaque tokens to new sorted tokens
         opaque_mapping = constant_handler.create_opaque_mapping()
 
@@ -407,6 +409,7 @@ def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg
 
         # Create FunctionData instance instead of updating four separate dictionaries
         function_data_dict[func_name] = FunctionData(
+            tokens=temp_tk,
             tokens_base64=tokens_base64,
             block_runlength_base64=block_base64,
             instruction_runlength_base64=insn_base64,
