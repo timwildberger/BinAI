@@ -239,13 +239,13 @@ def base64_to_ndarray_vec(s: str) -> np.ndarray:
     if bits > 33 or bits < 2:
         raise ValueError("invalid bit-width in header")
 
-    print(f"bits: {bits}")
+    # print(f"bits: {bits}")
 
     len_sel    = first & 0b111            # bottom 3 bits
     len_bits   = (len_sel + 1) * 4        # 4‥32
     hdr_bits   = 8 + len_bits
     len_bytes  = (len_bits + 7) // 8
-    print(f"len_bits: {len_bits}")
+    # print(f"len_bits: {len_bits}")
 
     if len(raw) < 1 + len_bytes:
         raise ValueError("corrupted input – length field incomplete")
@@ -256,7 +256,7 @@ def base64_to_ndarray_vec(s: str) -> np.ndarray:
     n = (len_int >> n_shift) & ((1 << len_bits) - 1)
     if n == 0:
         return np.empty(0, dtype=_dtype_for_bits(bits))
-    print(f"len_int: {len_int}")
+    # print(f"len_int: {len_int}")
 
     # --------------------------------------------------------------------
     # 2.  Vectorised extraction of `n` packed values

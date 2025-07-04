@@ -4,7 +4,6 @@ import pickle
 import csv, json
 import time
 from pathlib import Path
-from dataclasses import dataclass
 from address_meta_data_lookup import AddressMetaDataLookup
 from compact_base64_utils import ndarray_to_base64
 from tokenizer.compact_base64_utils import base64_to_ndarray_vec
@@ -14,20 +13,12 @@ from tokenizer.op_imm_mem import tokenize_operand_memory, tokenize_operand_immed
 from tokenizer.pickles import load_all_pickles, save_pickles
 from tokenizer.tokens import VocabularyManager, TokenResolver, Tokens, BlockToken
 from tokenizer.constant_handler import ConstantHandler
+from tokenizer.function_data_manager import FunctionDataManager, FunctionData
 from typing import Union, Optional
 from tqdm import tqdm
 import numpy as np
 import numpy.typing as npt
 
-
-@dataclass
-class FunctionData:
-    """Consolidated data structure for function analysis results"""
-    tokens: list[Tokens] #todo for debugging, this probably will use much much memory
-    tokens_base64: str
-    block_runlength_base64: str
-    instruction_runlength_base64: str
-    opaque_metadata: str
 
 """
 Blöcke 0 bis 16:
@@ -291,7 +282,7 @@ def lowlevel_disas(path, cfg, constant_list, with_pickled=False, project=None, *
     # Initialize VocabularyManager
     vocab_manager = VocabularyManager("x86")
 
-    function_data_dict = main_loop(vocab_manager=vocab_manager, **kwargs)
+    function_manager = main_loop(vocab_manager=vocab_manager, **kwargs)
 
     with open("disassembly.csv", encoding="utf-8", mode="w", newline='') as csvfile:
         writer = csv.writer(csvfile)
@@ -302,31 +293,28 @@ def lowlevel_disas(path, cfg, constant_list, with_pickled=False, project=None, *
         for k, v in func_disas_token.items():
             writer.writerow([k, v])
 
-
-
     # save_pickles(func_names,
-    #              duplicate_func_names, function_data_dict, vocab_manager)
+    #              duplicate_func_names, function_manager, vocab_manager)
 
-    return (func_names, duplicate_func_names, function_data_dict, vocab_manager)
+    return (func_names, duplicate_func_names, function_manager, vocab_manager)
 
 
 def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg, constant_list, duplicate_func_names,
               func_addr_range, func_disas, func_disas_token, func_name_addr, func_names, inv_prefix_tokens, lookup,
-              resolver, seen, text_end, text_start, vocab_manager, **_kwargs) -> dict[str, FunctionData]:
+              resolver, seen, text_end, text_start, vocab_manager, **_kwargs) -> FunctionDataManager:
 
-    # Replace the four separate dictionaries with one consolidated dictionary
-    function_data_dict: dict[str, FunctionData] = {}
+    # Initialize FunctionDataManager with pre-allocated arrays
+    total_functions = len(cfg.functions.items())
+    function_manager = FunctionDataManager(total_functions)
 
     for func_addr, func in tqdm(iterable=cfg.functions.items(),
                                 desc="Retrieving data from alllll functions. Like a big boy."):
         func_name = cfg.functions[func_addr].name
-        func_name_addr[func_name] = func_addr
         if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
             continue
 
         # Reset block counter for each function so block IDs start from 0
         resolver.reset_block_counter()
-
 
         (function_analysis) = fill_constant_candidates(
             func_addr=func_addr,
@@ -377,9 +365,6 @@ def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg
         if len(tokenized_instructions) == 0:
             continue
 
-        func_disas[func_name] = temp_bbs
-        func_disas_token[func_name] = temp_tk
-
         try:
             tokens_base64 = ndarray_to_base64(tokenized_instructions)
             block_base64 = ndarray_to_base64(block_run_lengths)
@@ -391,32 +376,40 @@ def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg
             if func_name == "mkdir":
                 print("DEBUGGING MKDIR")
 
-            if func_name in func_names:
-                i = 1
-                new_name = f"{func_name}_{i}"
-                while new_name in seen:
-                    i += 1
-                    new_name = f"{func_name}_{i}"
-                duplicate_func_names[new_name] = func_name  # mapping duplicate->original
-                func_name = new_name
-                seen.add(func_name)
+            # Create FunctionData instance
+            function_data = FunctionData(
+                tokens=temp_tk,
+                tokens_base64=tokens_base64,
+                block_runlength_base64=block_base64,
+                instruction_runlength_base64=insn_base64,
+                opaque_metadata=meta_result
+            )
+
+            # Add all function data in one operation and get the final function name
+            final_func_name = function_manager.add_function_data(
+                func_name, func_addr, temp_bbs, temp_tk, function_data
+            )
+
+            # Update legacy data structures for backward compatibility
+            func_name_addr[final_func_name] = func_addr
+            func_disas[final_func_name] = temp_bbs
+            func_disas_token[final_func_name] = temp_tk
+            func_names.append(final_func_name)
+
+            # Handle duplicate names for legacy compatibility
+            if final_func_name != func_name:
+                duplicate_func_names[final_func_name] = func_name
+                seen.add(final_func_name)
+
         except Exception as e:
             print(
                 f"Error processing {func_name}: {e}.\nTokenstream: {temp_tk}\nTokens: {tokenized_instructions}\nBlock encoding: {block_run_lengths}\nInstructions: {insn_run_lengths}\nMetaData: {str(meta_result)}")
             raise ValueError
 
-        func_names.append(func_name)
+    # Compact arrays to save memory
+    function_manager.compact_arrays()
 
-        # Create FunctionData instance instead of updating four separate dictionaries
-        function_data_dict[func_name] = FunctionData(
-            tokens=temp_tk,
-            tokens_base64=tokens_base64,
-            block_runlength_base64=block_base64,
-            instruction_runlength_base64=insn_base64,
-            opaque_metadata=meta_result
-        )
-
-    return function_data_dict
+    return function_manager
 
 
 def apply_opaque_mapping(temp_bbs, opaque_mapping, constant_handler=None):
@@ -538,7 +531,8 @@ def build_vocab_tokenize_and_index(blocks: list[list[list[Tokens]]]) -> (npt.NDA
 
 def main():
     print(f"STARTING DISASSEMBLY")
-    file_path = Path("../src/clamav/x86-clang-5.0-O1_sigtool").absolute()
+    # file_path = Path("../src/clamav/x86-clang-5.0-O1_sigtool").absolute()
+    file_path = Path("../src/clamav/x86-gcc-5-O3_minigzipsh").absolute()
     pickle_file_path = file_path.parent / f"{file_path.name}.pkl"
     pickle_mainloop_file_path = file_path.parent / f"{file_path.name}.mainloop.pkl"
     with_pickled = False
@@ -572,40 +566,31 @@ def main():
 
     start_time = time.time()
     print(f"calling lowlevel_disas")
-    (func_names, duplicate_func_names, function_data_dict, vocab_manager) = lowlevel_disas(with_pickled=with_pickled, **kvargs)
+    (func_names, duplicate_func_names, function_manager, vocab_manager) = lowlevel_disas(with_pickled=with_pickled, **kvargs)
     disassembly_time = time.time() - start_time
     print(f"Disassembly time: {disassembly_time:.2f} seconds")
 
     print(f"WRITING OUTPUT")
     with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
-        # Write header with appropriate column names
-        writer.writerow(['function_name', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata', f'"{",".join(vocab_manager.id_to_token)}"'])
+        # Write header with occurrence column added
+        writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata', f'"{",".join(vocab_manager.id_to_token)}"'])
 
-        for element in func_names:
-            # Resolve original name if duplicate
-            if element in duplicate_func_names:
-                original_name = duplicate_func_names[element]
-            else:
-                original_name = element
-
-            # Get function data from function_data_dict
-            if element in function_data_dict:
-                func_data = function_data_dict[element]
-                row = [
-                    original_name,
-                    func_data.tokens_base64,
-                    func_data.block_runlength_base64,
-                    func_data.instruction_runlength_base64,
-                    str(func_data.opaque_metadata)
-                ]
-                writer.writerow(row)
-            else:
-                print(f"Warning: Function {element} not found in function_data_dict")
+        # Use the sorted iterator from function_manager
+        for func_name, occurrence, function_data in function_manager.iter_function_data():
+            row = [
+                func_name,  # Keep original function name unchanged
+                occurrence,  # Add occurrence as separate column
+                function_data.tokens_base64,
+                function_data.block_runlength_base64,
+                function_data.instruction_runlength_base64,
+                str(function_data.opaque_metadata)
+            ]
+            writer.writerow(row)
 
     print("VERIFY OUTPUT")
 
-    # datastructures_to_insn(vocab=vocab, block_runlength_dict=block_run_length, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
+    # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_run_length, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
     token_to_insn("output.csv")
     compare_csv_files("reconstructed_disassembly.csv", "readable_tokenized_disassembly.csv")
     # compare_csv_files("reconstructed_disassembly_test.csv", "readable_tokenized_disassembly.csv")
