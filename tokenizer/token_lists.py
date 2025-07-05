@@ -196,15 +196,15 @@ class InsnTokenList:
 
     def to_asm_like(self) -> str:
         """Convert the block to an assembly-like string representation"""
-        return " ".join(t.to_asm_like() for t in self)
+        return " ".join(t.to_asm_like() for t in self.iter_tokens())
 
     def __repr__(self):
         """String representation of the block"""
-        return f"{self.__class__.__name__}[{" ".join(repr(t) for t in self)}]"
+        return f"{self.__class__.__name__}[{" ".join(repr(t) for t in self.iter_tokens())}]"
 
     def __str__(self):
         """String representation of the block"""
-        return f"[{" ".join(str(t) for t in self)}]"
+        return f"[{" ".join(str(t) for t in self.iter_tokens())}]"
 
 
 class BlockTokenList:

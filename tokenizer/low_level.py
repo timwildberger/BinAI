@@ -334,7 +334,7 @@ def disassemble_to_tokens(path, cfg, constant_list, with_pickled=False, project=
     with open("readable_tokenized_disassembly.csv", encoding="utf-8", mode="w", newline='') as csvfile:
         writer = csv.writer(csvfile)
         for k, v in func_disas_token.items():
-            writer.writerow([k, v])
+            writer.writerow([k, v.to_asm_like()])
 
     # save_pickles(func_names,
     #              duplicate_func_names, function_manager, vocab_manager)
