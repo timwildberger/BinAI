@@ -1,4 +1,5 @@
-from tokenizer.tokens import VocabularyManager, TokenResolver
+from tokenizer.tokens import TokenResolver
+from tokenizer.token_manager import VocabularyManager
 
 
 def name_opaque_constants(

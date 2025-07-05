@@ -1,5 +1,4 @@
 import angr
-import re
 import pickle
 import csv, json
 import time
@@ -7,18 +6,22 @@ from pathlib import Path
 from address_meta_data_lookup import AddressMetaDataLookup
 from compact_base64_utils import ndarray_to_base64
 from tokenizer.compact_base64_utils import base64_to_ndarray_vec
-from tokenizer.csv_files import parse_and_save_data_sections, token_to_insn, compare_csv_files, csv_to_dict
-from tokenizer.make_name import name_opaque_constants, name_value_constant_literals, name_value_constants
+from tokenizer.csv_files import parse_and_save_data_sections, token_to_insn, compare_csv_files
+from tokenizer.function_token_list import FunctionTokenList
 from tokenizer.op_imm_mem import tokenize_operand_memory, tokenize_operand_immediate
-from tokenizer.pickles import load_all_pickles, save_pickles
-from tokenizer.tokens import VocabularyManager, TokenResolver, Tokens, BlockToken
+from tokenizer.opaque_remapping import apply_opaque_mapping, apply_opaque_mapping_raw_optimized
+from tokenizer.token_lists import BlockTokenList
+from tokenizer.tokens import TokenResolver, Tokens, BlockToken
+from tokenizer.token_manager import VocabularyManager
 from tokenizer.constant_handler import ConstantHandler
 from tokenizer.function_data_manager import FunctionDataManager, FunctionData
-from typing import Union, Optional
+from tokenizer.instruction_sets import InstructionSets
+from typing import Optional
 from tqdm import tqdm
 import numpy as np
 import numpy.typing as npt
 
+VERIFICATION: bool = False
 
 """
 Blöcke 0 bis 16:
@@ -44,13 +47,16 @@ Konstanten:
 4. OpaqueConstantLiterals (if a function needs more than 16 Opaque Literals)
 """
 
+degenerate_prefixes = {
+    0xF2: ["repne", "repnz"],
+    0xF3: ["repe", "repz", "rep"], #ordering important due to string comparisons
+}
+
 
 def fill_constant_candidates(
         func_addr: int,
         func: angr.knowledge_plugins.functions.function.Function,
-        arithmetic_instructions: set[str],
-        addressing_control_flow_instructions: set[str],
-        inv_prefix_tokens: dict[str, str],
+        instr_sets: InstructionSets,
         constant_dict: dict[str, list[str]],
         lookup: AddressMetaDataLookup,
         text_start: int,
@@ -62,7 +68,8 @@ def fill_constant_candidates(
         list[tuple[str, list[list[Tokens]]]], # temp_bbs
         list[dict[BlockToken, tuple[str, str]]], # block_list
         dict[str, BlockToken], # block_dict
-        ConstantHandler
+        ConstantHandler,
+        FunctionTokenList # func_tokens
     ]
 ]:
     """
@@ -71,9 +78,7 @@ def fill_constant_candidates(
     Args:
         func_addr (int): Integer value of the function's start address
         func (angr.knowledge_plugins.functions.function.Function): angr function object to be analyzed
-        arithmetic_instructions (set): Set of all arithmetic instruction. Used to indicate non-opaque constants.
-        addressing_control_flow_instructions (set): Set of all instruction that indicate memory operations or controlflow. Used to indicate opaque constants.
-        inv_prefix_tokens (dict[str, str]): Maps the hex value of all possible decorators to their intended meaning.
+        instr_sets (InstructionSets): Container with all instruction classification sets
         constant_dict (dict[str, list[str]]): Stores all constants from .rodata
         lookup (AddressMetaDataLookup): lookupObject to quickly parse function libraries to populate opaque_const_meta
         text_start (int): Start address of the .text section
@@ -90,8 +95,12 @@ def fill_constant_candidates(
     block_list: list[dict[BlockToken, tuple[str, str]]] = []
     block_dict: dict[str, BlockToken] = {}  # hex value of Block address: block_token
 
-    if sum(1 for _ in func.blocks) == 1 and next(func.blocks).capstone.insns is None:
+    num_blocks = sum(1 for _ in func.blocks)
+
+    if num_blocks == 1 and next(func.blocks).capstone.insns is None:
         return None
+
+    func_tokens = FunctionTokenList(num_blocks, vocab_manager=vocab_manager)
 
     for block in func.blocks:
 
@@ -111,73 +120,121 @@ def fill_constant_candidates(
         )
         blocks.add(block_addr)
 
-        if block.capstone.insns is None:
-            print("KAPUTT")
+        assert block.capstone.insns is not None, "Block has no instructions, cannot disassemble"
 
         block_dict[block_addr] = block_token
 
-        disassembly_list = [[vocab_manager.Block_Def(), block_token]]
+        block_def = [vocab_manager.Block_Def(), block_token]
+
+        disassembly_list = BlockTokenList(len(block.capstone.insns)+1, vocab_manager=vocab_manager)
+        disassembly_list.append_as_insn(insn_str=f"block {block_addr}", tokens=block_def)
+
+        disassembly_list2 = [block_def]
 
         # Single loop over instructions to get both disassembly and immediates
         for insn in block.capstone.insns:
-            # Extract non-zero prefixes (up to 4 bytes)
-            prefix_bytes = [f"0x{b:02X}" for b in insn.prefix if b != 0]
-            # print(f"prefix bytes: {prefix_bytes}")
-            
-            insn_tokens = []
-
-            # Register prefix tokens
-            # looking at capstone source: https://github.com/qemu/capstone/blob/9e27c51c2485dd37dd3917919ae781c6153f3688/include/capstone/x86.h#L247C1-L262C14
-            for byte in prefix_bytes:
-                if byte in inv_prefix_tokens:
-                    prefix_name: str = inv_prefix_tokens[byte]
-                    insn_tokens.append(vocab_manager.PlatformToken(prefix_name))
+            insn_tokens = disassembly_list.view(insn_str = f"{insn.mnemonic} {insn.op_str}")
 
 
-            insn_tokens.append(vocab_manager.PlatformToken(insn.insn.insn_name()))
-            #interesting stuff: insn.group_name(insn.groups[0])
-            insn_list = []
+            (insn_tokens, insn_tokens2) = parse_instruction(instr_sets, constant_handler,
+                              func_max_addr, func_min_addr, insn, lookup, text_end, text_start,
+                              vocab_manager, insn_tokens)
 
-            if hasattr(insn, "operands"):
-                # print("\n")
-                # go through all operands
-                for op in insn.operands:
-                    insn_list.append(op.type)
-                    if op.type == 0 or op.type > 3:
-                        raise Exception
-                    if op.type == 1:  # REGISTER
-                        insn_tokens.append(vocab_manager.get_registry_token(insn, op.reg))
-                        # reg_name = insn.reg_name(op.reg)
-                        # if reg_name not in symbol_tokens:
-                        #     symbol_tokens[reg_name] = vocab_manager.PlatformToken(reg_name)
-                    elif op.type == 2:  # IMMEDIATE
-                        immediate_tokens = tokenize_operand_immediate(
-                            addressing_control_flow_instructions, arithmetic_instructions,
-                            insn, lookup, op, func_max_addr, func_min_addr, constant_handler)
-                        insn_tokens.extend(immediate_tokens)
+            disassembly_list.add_insn(insn_tokens)
+            if VERIFICATION:
+                disassembly_list2.append(insn_tokens2)
 
-                    elif op.type == 3:  # MEMORY
-                        memory_tokens = tokenize_operand_memory(insn, lookup, op, text_end,
-                                                               text_start, func_max_addr, func_min_addr,
-                                                               vocab_manager, constant_handler)
-                        insn_tokens.extend(memory_tokens)
 
-            else:
-                print(f"INSTRUCTION WITHOUT OPERANDS: {insn}")
-                raise TypeError
+        if VERIFICATION:
+            for (x, y) in zip([token   for insn in disassembly_list2  for token in insn], disassembly_list.iter_raw_tokens()):
+                if x != y:
+                    print(f"Token mismatch: {x} != {y}")
+                    raise ValueError("Token mismatch in disassembly list")
 
-            disassembly_list.append(insn_tokens)
-
-        temp_bbs.append((block_addr, disassembly_list))
+        if VERIFICATION:
+            temp_bbs.append((block_addr, disassembly_list2))
+        func_tokens.add_block(disassembly_list, block_addr)
     return (
         temp_bbs,
         block_list,
         block_dict,
         constant_handler,
+        func_tokens,
     )
 
 
-def lowlevel_disas(path, cfg, constant_list, with_pickled=False, project=None, **kwargs):
+def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr, insn, lookup, text_end, text_start,
+                      vocab_manager, insn_tokens):
+    insn_tokens2 = [] if VERIFICATION else None
+
+    # Register prefix tokens
+    # looking at capstone source: https://github.com/qemu/capstone/blob/9e27c51c2485dd37dd3917919ae781c6153f3688/include/capstone/x86.h#L247C1-L262C14
+    for byte in insn.prefix:
+        if byte in degenerate_prefixes:
+            skip = True
+            for prefix_name in degenerate_prefixes[byte]:
+                if insn.mnemonic.startswith(prefix_name):
+                    token = vocab_manager.PlatformToken(prefix_name)
+                    insn_tokens.append(token)
+                    if VERIFICATION:
+                        insn_tokens2.append(token)
+                    break
+            else:
+                skip = False
+            if skip:
+                continue
+
+        if byte in instr_sets.prefixes:
+            prefix_name: str = instr_sets.prefixes[byte]
+            token = vocab_manager.PlatformToken(prefix_name)
+            insn_tokens.append(token)
+            if VERIFICATION:
+                insn_tokens2.append(token)
+    token = vocab_manager.PlatformToken(insn.insn.insn_name())
+    insn_tokens.append(token)
+    if VERIFICATION:
+        insn_tokens2.append(token)
+    # interesting stuff: insn.group_name(insn.groups[0])
+    insn_list = []
+    if hasattr(insn, "operands"):
+        # print("\n")
+        # go through all operands
+        for op in insn.operands:
+            insn_list.append(op.type)
+            if op.type == 0 or op.type > 3:
+                raise Exception
+            if op.type == 1:  # REGISTER
+                token = vocab_manager.get_registry_token(insn, op.reg)
+                insn_tokens.append(token)
+                if VERIFICATION:
+                    insn_tokens2.append(token)
+                # reg_name = insn.reg_name(op.reg)
+                # if reg_name not in symbol_tokens:
+                #     symbol_tokens[reg_name] = vocab_manager.PlatformToken(reg_name)
+            elif op.type == 2:  # IMMEDIATE
+                immediate_tokens = tokenize_operand_immediate(
+                    instr_sets.addressing_control_flow, instr_sets.arithmetic,
+                    insn, lookup, op, func_max_addr, func_min_addr, constant_handler)
+                insn_tokens.extend(immediate_tokens)
+                if VERIFICATION:
+                    insn_tokens2.extend(immediate_tokens)
+
+            elif op.type == 3:  # MEMORY
+                memory_tokens = tokenize_operand_memory(insn, lookup, op, text_end,
+                                                        text_start, func_max_addr, func_min_addr,
+                                                        vocab_manager, constant_handler)
+                insn_tokens.extend(memory_tokens)
+                if VERIFICATION:
+                    insn_tokens2.extend(memory_tokens)
+
+    else:
+        print(f"INSTRUCTION WITHOUT OPERANDS: {insn}")
+        raise TypeError
+
+    return insn_tokens, insn_tokens2
+
+
+def disassemble_to_tokens(path, cfg, constant_list, with_pickled=False, project=None, **kwargs):
     """
     Operand types: (in theory)
     0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
@@ -220,14 +277,7 @@ def lowlevel_disas(path, cfg, constant_list, with_pickled=False, project=None, *
         data = {}
         with open("./data_store.json") as f:
             data = json.load(f)
-        arithmetic_instructions: set = set(data["arithmetic_instructions"])
-        addressing_control_flow_instructions: set = set(
-            data["addressing_control_flow_instructions"]
-        )
-        string_instructions: set = set(data["string_instructions"])
-        bit_manipulation_instructions: set = set(data["bit_manipulation_instructions"])
-        floating_point_instructions: set = set(data["floating_point_instructions"])
-        system_instructions: set = set(data["system_instructions"])
+
         inv_prefix_tokens: dict[str, str] = data["inv_prefix_tokens"]
 
         # Get .text section size
@@ -245,26 +295,15 @@ def lowlevel_disas(path, cfg, constant_list, with_pickled=False, project=None, *
         # SECTION PARSER FOR FUNCTION LOOKUP
         lookup = AddressMetaDataLookup(path)
 
-        # Initialize the resolver for token management
-        resolver = TokenResolver()
-
         func_disas_token: dict[str, list[dict[str, list[str]]]] = {}
 
         func_name_addr = {}
-        duplicate_func_names: dict[str, str] = {}
-        seen = set()
 
-        kwargs = dict(addressing_control_flow_instructions=addressing_control_flow_instructions,
-                      arithmetic_instructions=arithmetic_instructions,
-                      bit_manipulation_instructions=bit_manipulation_instructions,
-                      block_runlength_dict=block_runlength_dict, cfg=cfg, constant_list=constant_list,
-                      duplicate_func_names=duplicate_func_names,
-                      floating_point_instructions=floating_point_instructions,
+        kwargs = dict(block_runlength_dict=block_runlength_dict, cfg=cfg, constant_list=constant_list,
                       func_addr_range=func_addr_range, func_disas=func_disas, func_disas_token=func_disas_token,
                       func_name_addr=func_name_addr, func_names=func_names, insn_runlength_dict=insn_runlength_dict,
                       inv_prefix_tokens=inv_prefix_tokens, lookup=lookup, opaque_const_meta=opaque_const_meta,
-                      opaque_meta_dict=opaque_meta_dict, resolver=resolver, seen=seen,
-                      string_instructions=string_instructions, system_instructions=system_instructions,
+                      opaque_meta_dict=opaque_meta_dict,
                       text_end=text_end,
                       text_start=text_start)
 
@@ -276,11 +315,15 @@ def lowlevel_disas(path, cfg, constant_list, with_pickled=False, project=None, *
         kwargs.update(dict(cfg=cfg, constant_list=constant_list))
         func_disas = kwargs["func_disas"]
         func_disas_token = kwargs["func_disas_token"]
-        duplicate_func_names = kwargs["duplicate_func_names"]
         func_names = kwargs["func_names"]
 
     # Initialize VocabularyManager
     vocab_manager = VocabularyManager("x86")
+
+    # Initialize the resolver for token management
+    resolver = TokenResolver()
+    instr_sets = InstructionSets()
+    kwargs.update(dict(resolver=resolver, instr_sets=instr_sets))
 
     function_manager = main_loop(vocab_manager=vocab_manager, **kwargs)
 
@@ -296,12 +339,12 @@ def lowlevel_disas(path, cfg, constant_list, with_pickled=False, project=None, *
     # save_pickles(func_names,
     #              duplicate_func_names, function_manager, vocab_manager)
 
-    return (func_names, duplicate_func_names, function_manager, vocab_manager)
+    return (func_names, function_manager, vocab_manager)
 
 
-def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg, constant_list, duplicate_func_names,
+def main_loop(instr_sets, cfg, constant_list,
               func_addr_range, func_disas, func_disas_token, func_name_addr, func_names, inv_prefix_tokens, lookup,
-              resolver, seen, text_end, text_start, vocab_manager, **_kwargs) -> FunctionDataManager:
+              resolver, text_end, text_start, vocab_manager, **_kwargs) -> FunctionDataManager:
 
     # Initialize FunctionDataManager with pre-allocated arrays
     total_functions = len(cfg.functions.items())
@@ -319,9 +362,7 @@ def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg
         (function_analysis) = fill_constant_candidates(
             func_addr=func_addr,
             func=func,
-            arithmetic_instructions=arithmetic_instructions,
-            addressing_control_flow_instructions=addressing_control_flow_instructions,
-            inv_prefix_tokens=inv_prefix_tokens,
+            instr_sets=instr_sets,
             constant_dict=constant_list,
             lookup=lookup,
             text_start=text_start,
@@ -336,31 +377,38 @@ def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg
         (temp_bbs,
         block_list,
         block_dict,
-        constant_handler) = function_analysis
+        constant_handler,
+        func_tokens) = function_analysis
 
         func_addr_range[func_addr] = sorted(
             block_list, key=lambda d: list(d.values())[0][0]
         )
 
-        if func_name == "mkdir":
-            print("DEBUGGING MKDIR")
 
         # Create mapping from old opaque tokens to new sorted tokens
         opaque_mapping = constant_handler.create_opaque_mapping()
 
         # Apply the mapping to replace opaque tokens in temp_bbs
         if len(opaque_mapping) > 0:
-            temp_bbs = apply_opaque_mapping(temp_bbs, opaque_mapping, constant_handler)
+            func_tokens = apply_opaque_mapping_raw_optimized(func_tokens, opaque_mapping, vocab_manager, constant_handler)
+            if VERIFICATION:
+                temp_bbs = apply_opaque_mapping(temp_bbs, opaque_mapping, constant_handler=None) #do not reorder constant_handler twice
+
+        if VERIFICATION:
+            for (x, y) in zip([token for (_, block) in temp_bbs for insn in block for token in insn], func_tokens.iter_raw_tokens()):
+                if x != y:
+                    print(f"Token mismatch: {x} != {y}")
+                    raise ValueError("Token mismatch in disassembly list")
 
         # Get metadata from constant handler
         opaque_metadata = constant_handler.get_metadata()
         meta_result = list(opaque_metadata.values())
 
         # Create token stream directly from temp_bbs (which already contains TokensRepl objects)
-        temp_tk = [tokens for (addr, tokens) in temp_bbs]
+        # temp_tk = [tokens for (addr, tokens) in temp_bbs]
 
         tokenized_instructions, block_run_lengths, insn_run_lengths = (
-            build_vocab_tokenize_and_index(temp_tk)
+            build_vocab_tokenize_and_index(func_tokens)
         )
         if len(tokenized_instructions) == 0:
             continue
@@ -373,37 +421,31 @@ def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg
             assert np.all(base64_to_ndarray_vec(block_base64) == block_run_lengths), "Base64 conversion failed for block run lengths"
             assert np.all(base64_to_ndarray_vec(insn_base64) == insn_run_lengths), "Base64 conversion failed for instruction run lengths"
 
-            if func_name == "mkdir":
-                print("DEBUGGING MKDIR")
 
             # Create FunctionData instance
             function_data = FunctionData(
-                tokens=temp_tk,
+                tokens=func_tokens,
                 tokens_base64=tokens_base64,
                 block_runlength_base64=block_base64,
                 instruction_runlength_base64=insn_base64,
-                opaque_metadata=meta_result
+                opaque_metadata=repr(meta_result)
             )
 
             # Add all function data in one operation and get the final function name
             final_func_name = function_manager.add_function_data(
-                func_name, func_addr, temp_bbs, temp_tk, function_data
+                func_name, func_addr, temp_bbs, func_tokens, function_data
             )
 
             # Update legacy data structures for backward compatibility
             func_name_addr[final_func_name] = func_addr
             func_disas[final_func_name] = temp_bbs
-            func_disas_token[final_func_name] = temp_tk
+            func_disas_token[final_func_name] = func_tokens
             func_names.append(final_func_name)
 
-            # Handle duplicate names for legacy compatibility
-            if final_func_name != func_name:
-                duplicate_func_names[final_func_name] = func_name
-                seen.add(final_func_name)
 
         except Exception as e:
             print(
-                f"Error processing {func_name}: {e}.\nTokenstream: {temp_tk}\nTokens: {tokenized_instructions}\nBlock encoding: {block_run_lengths}\nInstructions: {insn_run_lengths}\nMetaData: {str(meta_result)}")
+                f"Error processing {func_name}: {e}.\nTokenstream: {func_tokens}\nTokens: {tokenized_instructions}\nBlock encoding: {block_run_lengths}\nInstructions: {insn_run_lengths}\nMetaData: {str(meta_result)}")
             raise ValueError
 
     # Compact arrays to save memory
@@ -412,127 +454,29 @@ def main_loop(addressing_control_flow_instructions, arithmetic_instructions, cfg
     return function_manager
 
 
-def apply_opaque_mapping(temp_bbs, opaque_mapping, constant_handler=None):
+def build_vocab_tokenize_and_index(func_tokens: FunctionTokenList) -> (npt.NDArray[np.int_], npt.NDArray[np.int_], npt.NDArray[np.int_]):
     """
-    Apply opaque token mapping to replace old tokens with new sorted tokens.
-    Also reorders metadata to match the new token ordering.
-
-    Args:
-        temp_bbs: List of blocks containing instruction tokens
-        opaque_mapping: Dictionary mapping old opaque tokens to new sorted tokens
-        constant_handler: Optional ConstantHandler to also reorder metadata
-
-    Returns:
-        Updated temp_bbs with remapped tokens
+    Updated function to work with FunctionTokenList for efficient token processing.
+    Now expects a FunctionTokenList instance instead of raw block data.
     """
-    updated_bbs = []
-    #todo i am very very sure we also need to reorder metadata
+    if func_tokens.last_index == 0:
+        return np.array([], dtype=np.int_), np.array([], dtype=np.int_), np.array([], dtype=np.int_)
 
-    for (block_addr, instruction_list) in temp_bbs:
-        updated_instructions = []
+    # Get the used arrays from FunctionTokenList
+    (token_ids, _, _, _,
+     insn_idx_run_lengths, _,
+     block_insn_run_lengths, _, _) = func_tokens.get_used_arrays()
 
-        for instruction_tokens in instruction_list:
-            updated_instruction = []
+    block_insn_split_start_indicies = np.cumsum(np.insert(block_insn_run_lengths[:-1], 0, 0))
+    block_idx_run_lengths = np.add.reduceat(insn_idx_run_lengths, block_insn_split_start_indicies)
 
-            for token in instruction_tokens:
-                # Check if this token needs to be remapped
-                if token in opaque_mapping:
-                    updated_instruction.append(opaque_mapping[token])
-                else:
-                    updated_instruction.append(token)
-
-            updated_instructions.append(updated_instruction)
-
-
-        updated_bbs.append((block_addr, updated_instructions))
-
-    # If constant_handler is provided, also reorder metadata
-    if constant_handler is not None and opaque_mapping:
-        constant_handler.reorder_metadata_for_mapping(opaque_mapping)
-
-    return updated_bbs
-
-
-
-def token_to_instruction(vocab, tokenstream):
-    insn = []
-    print(f"TOKENSTREAM NEWNWNWNWNNWNW: {tokenstream}")
-    id_to_token = {v: k for k, v in vocab.items()}
-    for element in tokenstream:
-        insn.append(id_to_token[int(element)])
-    return insn
-
-
-def resolve_metadata(dict1, dict2, metadata_dict, placeholder=('UNKNOWN', -1), key_index=2) -> list[
-    tuple[str, str, str, str, str]]:
-    """
-    Matches addresses from dict1 and dict2 with metadata_dict using exact and range matching.
-
-    :param dict1: dict mapping address to token name
-    :param dict2: same as dict1
-    :param metadata_dict: dict mapping address to metadata tuple (token_name, range_end, ...)
-    :param placeholder: tuple to use when no match is found
-    :param key_index: index in metadata tuple that holds the end address
-    :return: list of metadata tuples (either matched or placeholder)
-    """
-    result: list[tuple[str, str, str, str, str]] = []
-    addresses = set(dict1.keys()) | set(dict2.keys())
-
-    for addr in addresses:
-        if addr in metadata_dict:
-            result.append(metadata_dict[addr])
-        else:
-            # Try range match
-            match_found = False
-            for base_addr, meta in metadata_dict.items():
-                try:
-                    range_end = int(meta[key_index], 16) if isinstance(meta[key_index], str) else meta[key_index]
-                    if int(base_addr, 16) <= int(addr, 16) <= range_end:
-                        result.append(meta)
-                        match_found = True
-                        break
-                except (IndexError, ValueError, TypeError):
-                    continue
-            if not match_found:
-                result.append(placeholder)
-    return result
-
-
-
-
-
-
-def build_vocab_tokenize_and_index(blocks: list[list[list[Tokens]]]) -> (npt.NDArray[np.int_], npt.NDArray[np.int_], npt.NDArray[np.int_]):
-    """
-    Updated function to work with TokensRepl objects from create_tokenstream.
-    Now expects blocks as list[list[list[TokensRepl]]] instead of tuples.
-    """
-
-    # flatten instructions
-    insn_run_lengths: list[npt.NDArray[np.int_]] = [np.array([len(insn) for insn in insns]) for insns in blocks]
-    block_run_lengths: npt.NDArray[np.int_] = np.array([insns.sum() for insns in insn_run_lengths])
-    insn_run_lengths: npt.NDArray[np.int_] = np.concatenate(insn_run_lengths)
-
-    def traverse(o, tree_types=(list, tuple)):
-        if isinstance(o, list):
-            for value in o:
-                for subvalue in traverse(value, tree_types):
-                    yield subvalue
-        elif isinstance(o, Tokens):
-            for id in o.get_token_ids():
-                yield id
-        else:
-            raise TypeError(f"Unsupported type: {type(o)}")
-
-    tokenized_instructions = np.array([x for x in traverse(blocks)], dtype=np.int_)
-
-    return tokenized_instructions, block_run_lengths, insn_run_lengths
+    return token_ids, block_idx_run_lengths, insn_idx_run_lengths
 
 
 def main():
     print(f"STARTING DISASSEMBLY")
-    # file_path = Path("../src/clamav/x86-clang-5.0-O1_sigtool").absolute()
-    file_path = Path("../src/clamav/x86-gcc-5-O3_minigzipsh").absolute()
+    file_path = Path("../src/clamav/x86-clang-5.0-O1_sigtool").absolute()
+    # file_path = Path("../src/clamav/x86-gcc-5-O3_minigzipsh").absolute()
     pickle_file_path = file_path.parent / f"{file_path.name}.pkl"
     pickle_mainloop_file_path = file_path.parent / f"{file_path.name}.mainloop.pkl"
     with_pickled = False
@@ -566,7 +510,7 @@ def main():
 
     start_time = time.time()
     print(f"calling lowlevel_disas")
-    (func_names, duplicate_func_names, function_manager, vocab_manager) = lowlevel_disas(with_pickled=with_pickled, **kvargs)
+    (func_names, function_manager, vocab_manager) = disassemble_to_tokens(with_pickled=with_pickled, **kvargs)
     disassembly_time = time.time() - start_time
     print(f"Disassembly time: {disassembly_time:.2f} seconds")
 
@@ -590,7 +534,7 @@ def main():
 
     print("VERIFY OUTPUT")
 
-    # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_run_length, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
+    # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_runlength, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
     token_to_insn("output.csv")
     compare_csv_files("reconstructed_disassembly.csv", "readable_tokenized_disassembly.csv")
     # compare_csv_files("reconstructed_disassembly_test.csv", "readable_tokenized_disassembly.csv")
@@ -617,6 +561,23 @@ def main():
 
 
 if __name__ == "__main__":
+    print("loading")
+    import sys
+    import csv
+
+    maxInt = sys.maxsize
+
+    while True:
+        # decrease the maxInt value by factor 10
+        # as long as the OverflowError occurs.
+
+        try:
+            csv.field_size_limit(maxInt)
+            break
+        except OverflowError:
+            maxInt = int(maxInt / 10)
+
+    print("running main")
     main()
 
     # TODO nach csv bauen: Reversecheck ob das auch alles wieder korrekt aufgelöst wird

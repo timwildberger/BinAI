@@ -18,12 +18,4 @@ def register_name_range(id: int, basename: str) -> str:
     name += f" {basename}_Lit_End"
     return name
 
-def register_value_in_dict(dict: dict, value: str) -> dict:
-    if value not in dict:
-        dict[value] = 1
-    else:
-        dict[value] += 1
-    return dict
 
-def mnemonic_to_token(mnemonic) -> str:
-    return f"x86_{mnemonic.upper()}"

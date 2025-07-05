@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tokenizer.compact_base64_utils import base64_to_ndarray
+from tokenizer.compact_base64_utils import base64_to_ndarray, base64_to_ndarray_vec
 from tokenizer.utils import register_name_range
 
 
@@ -215,22 +215,19 @@ def token_to_insn(path: str):
         reader = csv.reader(csvfile)
         token_dict: dict[str, str] = {}
         vocab: dict[int, str] = {}
-        row_iter: int = 0
-        for row in reader:
-            if row_iter == 0:
-                for element in row:
-                    vocab[row_iter] = element
-                    row_iter += 1
-                print(vocab)
-            else:
-                # print("\n")
-                index = row[0]
+        csv_iter = iter(reader)
+        for index, token in enumerate(next(csv_iter)[6][1:-1].split(",")):
+            vocab[index] = token
+        print(vocab)
 
-                tokens = base64_to_ndarray(row[1])
-                block_runlength = base64_to_ndarray(row[2])
-                insn_runlength = base64_to_ndarray(row[3])
-                string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
-                token_dict[index] = string_stream
+        for row in reader:
+            index = row[0]
+            dubble_index = row[1]
+            tokens = base64_to_ndarray_vec(row[2])
+            block_runlength = base64_to_ndarray_vec(row[3])
+            insn_runlength = base64_to_ndarray_vec(row[4])
+            string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
+            token_dict[index] = string_stream
 
     with open("reconstructed_disassembly.csv", mode="w", newline='', encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)

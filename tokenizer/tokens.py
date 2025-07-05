@@ -1,8 +1,102 @@
 from abc import ABC, abstractmethod
-from typing import List, Set, Protocol, runtime_checkable
-from enum import Enum
+from typing import List, Type, TypeVar, cast, Any, Optional
+from enum import Enum, IntEnum
+from dataclasses import dataclass
+import numpy as np
+import numpy.typing as npt
 
-from tokenizer.utils import register_name_range
+T = TypeVar('T', bound='Tokens')
+
+def EnumTokenCls(enum_class: Type[Enum]) -> Any:
+    """Decorator to create lazy class properties for all enum members and required infrastructure"""
+    def decorator(cls: Type[T]) -> Type[T]:
+        # Get the enum name and create dataclass name
+        enum_name = enum_class.__name__
+        dataclass_name = "EnumTokenCache"
+
+        # Create the dataclass dynamically
+        dataclass_fields = {}
+        for member in enum_class:
+            dataclass_fields[member.name] = 'MemoryOperandToken | None'
+
+        # Create the dataclass type
+        dataclass_type = type(dataclass_name, (), {
+            '__annotations__': {name: typ for name, typ in dataclass_fields.items()},
+            '__module__': cls.__module__,
+            '__doc__': f"Dataclass containing all {enum_name.lower()} symbol tokens",
+            **{name: None for name in dataclass_fields.keys()}
+        })
+        # Apply dataclass decorator with type ignore for the warning
+        dataclass_type = dataclass(dataclass_type)  # type: ignore
+
+        # Add the dataclass as a class member instead of module globals
+        setattr(cls, dataclass_name, dataclass_type)
+
+        # Add abstract methods to the class
+        def _get_enum_token_cache(cls):
+            """Return a dataclass instance containing all symbol tokens"""
+            pass
+        _get_enum_token_cache.__doc__ = f"Return a dataclass instance containing all {enum_name.lower()} symbol tokens"
+
+        def _from_enum(cls, symbol):
+            """Create token from enum member"""
+            pass
+        _from_enum.__doc__ = f"Create token from {enum_name} member"
+
+        # Make them abstract methods
+        _get_enum_token_cache = classmethod(abstractmethod(_get_enum_token_cache))
+        _from_enum = classmethod(abstractmethod(_from_enum))
+
+        # Add to class
+        setattr(cls, '_get_enum_token_cache', _get_enum_token_cache)
+        setattr(cls, '_from_enum', _from_enum)
+
+        # Create properties for each enum member
+        for member in enum_class:
+            property_name = member.name
+
+            # Create the property method
+            def create_property_method(enum_member):
+                def property_method(cls):
+                    syms = cls._get_enum_token_cache()
+                    attr_name = enum_member.name
+                    if getattr(syms, attr_name) is None:
+                        setattr(syms, attr_name, cls._from_enum(enum_member))
+                    return getattr(syms, attr_name)
+                return property_method
+
+            property_method = create_property_method(member)
+            property_method.__doc__ = f"Return a {enum_name.lower()} token for {property_name.lower().replace('_', ' ')} symbol"
+
+            # Create a class property using a descriptor approach
+            class ClassPropertyDescriptor:
+                def __init__(self, func):
+                    self.func = func
+                    self.__doc__ = func.__doc__
+
+                def __get__(self, obj, cls):
+                    return self.func(cls)
+
+            # Add as class property
+            setattr(cls, property_name, ClassPropertyDescriptor(property_method))
+
+        return cls
+    return decorator
+
+class classproperty(property):
+    def __get__(self, owner_self, owner_cls):
+        return self.fget(owner_cls)
+
+class TokenType(IntEnum):
+    """Enum for token types to identify token classes"""
+    ERROR = 0
+    PLATFORM = 1
+    VALUED_CONST = 2
+    BLOCK_DEF = 3
+    BLOCK = 4
+    OPAQUE_CONST = 5
+    MEMORY_OPERAND = 6
+    TOKEN_SET = 7
 
 
 class MemoryOperandSymbol(Enum):
@@ -32,14 +126,30 @@ class MemoryOperandSymbol(Enum):
 class Tokens(ABC):
     """Protocol for token representation objects"""
 
+    @classproperty
     @abstractmethod
-    def get_token_ids(self) -> List[int]:
+    def token_type(cls) -> TokenType:
+        """Return the type of this token representation"""
+        ...
+
+    @classmethod
+    @abstractmethod
+    def _from_token_ids(cls, token_ids: List[int]) -> 'Tokens': ...
+
+
+    @abstractmethod
+    def get_token_ids(self) -> npt.NDArray[np.int_]:
         """Get the list of token IDs for this token representation (order matters)"""
         ...
 
     @abstractmethod
     def to_string(self) -> str:
         """Convert token to its string representation (for debugging only)"""
+        ...
+
+    @abstractmethod
+    def to_asm_like(self) -> str:
+        """Convert token to its string representation that resembles assembly syntax"""
         ...
 
     def __str__(self) -> str:
@@ -54,16 +164,24 @@ class Tokens(ABC):
 
     def __eq__(self, other) -> bool:
         """Tokens are equal if they have the same class and same token IDs"""
-        if not isinstance(other, Tokens):
+        if (not isinstance(other, Tokens)) or self.token_type != other.token_type:
             return False
-        return (self.__class__.__name__ == other.__class__.__name__ and
-                self.get_token_ids() == other.get_token_ids())
+        myids = self.get_token_ids()
+        otherids = other.get_token_ids()
+
+        return (myids.shape == otherids.shape and
+                np.all(myids == otherids))
 
 
 class PlatformToken(Tokens, ABC):
     """Protocol for platform-specific tokens"""
 
     token: str
+    
+    @classproperty
+    def token_type(cls) -> TokenType:
+        """Return the type of this token representation"""
+        return TokenType.PLATFORM
 
     @abstractmethod
     def __init__(self, token: str) -> None:
@@ -73,6 +191,12 @@ class PlatformToken(Tokens, ABC):
 class ValuedConstToken(Tokens, ABC):
     """Protocol for valued constants"""
 
+    @classproperty
+    def token_type(cls) -> TokenType:
+        """Return the type of this token representation"""
+        return TokenType.VALUED_CONST
+    
+    
     value: int
 
     @abstractmethod
@@ -89,14 +213,46 @@ class IdentifierToken(Tokens, ABC):
     def __init__(self, identifier_id: int) -> None:
         ...
 
+    @classmethod
+    def singleton_token_index(cls, id: int) -> Optional[int]:
+        """
+        Get the index of this identifier token in the vocabulary. If the identifier can be represented as a singleton token,
+
+
+        Returns:
+            Index of this identifier token in the vocabulary
+        """
+        ...
+
+    @classmethod
+    def value_by_singleton_token_index(cls, index: int) -> Optional[int]:
+        """
+        Get the value of this identifier token by its index in the vocabulary. If the identifier can be represented as a singleton token,
+
+
+        Args:
+            index: Index of the identifier token in the vocabulary
+
+        Returns:
+            Value of this identifier token
+        """
+        ...
+
+    @classmethod
     @abstractmethod
-    def _get_basename(self) -> str:
+    def _get_basename(cls) -> str:
         """Get the base name for this identifier type"""
         ...
 
 
 class BlockDefToken(Tokens, ABC):
     """Protocol for block definition tokens"""
+
+
+    @classproperty
+    def token_type(cls) -> TokenType:
+        """Return the type of this token representation"""
+        return TokenType.BLOCK_DEF
 
     @abstractmethod
     def __init__(self) -> None:
@@ -106,6 +262,12 @@ class BlockDefToken(Tokens, ABC):
 class BlockToken(IdentifierToken, ABC):
     """Protocol for block identifiers"""
 
+    @classproperty
+    def token_type(cls) -> TokenType:
+        """Return the type of this token representation"""
+        return TokenType.BLOCK
+    
+    
     @abstractmethod
     def __init__(self, block_id: int) -> None:
         ...
@@ -114,13 +276,23 @@ class BlockToken(IdentifierToken, ABC):
 class OpaqueConstToken(IdentifierToken, ABC):
     """Protocol for opaque constants"""
 
+    @classproperty
+    def token_type(cls) -> TokenType:
+        """Return the type of this token representation"""
+        return TokenType.OPAQUE_CONST
+
     @abstractmethod
     def __init__(self, opaque_id: int) -> None:
         ...
 
-
+@EnumTokenCls(MemoryOperandSymbol)
 class MemoryOperandToken(Tokens, ABC):
     """Protocol for memory operand symbol tokens"""
+
+    @classproperty
+    def token_type(cls) -> TokenType:
+        """Return the type of this token representation"""
+        return TokenType.MEMORY_OPERAND
 
     symbol: MemoryOperandSymbol
 
@@ -128,371 +300,81 @@ class MemoryOperandToken(Tokens, ABC):
     def __init__(self, symbol: MemoryOperandSymbol) -> None:
         ...
 
+class TokenRaw(Tokens, ABC):
+    _cache: dict[TokenType, type['TokenRaw']] = {}
 
-class VocabularyManager:
-    """Manages vocabulary for token-to-ID mapping"""
+    @abstractmethod
+    def resolve(self, vocab_manager: 'VocabularyManager') -> 'Tokens': ...
 
-    def __init__(self, platform: str):
-        self.platform = platform
-        self.id_to_token: list[str] = []  # array: id to tokenstr
-        self.token_to_id: dict[str, int] = {}  # dict: tokenstr to id
-        self.last_id: int = 0  # starting with 0 and increasing
-        self.register_tokens = []
+    def with_type(token_type_enum: TokenType) -> type['TokenRaw']:
+        """
+        Create a new TokenRaw with the specified token type.
 
-        # Create unique inner classes for this instance
-        self._create_inner_classes()
+        Args:
+            token_type_enum: TokenType enum value to set for the new token
 
-    def _private_add_token(self, token: str) -> int:
-        """Add a token to the vocabulary and return its ID"""
-        if token in self.token_to_id:
-            return self.token_to_id[token]
+        Returns:
+            New TokenRaw instance with the specified type
+        """
 
-        assert (not (token.startswith("Block") or token.startswith("OPAQUE_CONST"))) or \
-               (token[-2] == '_' or "Lit" in token or token == "Block_Def"), \
-            f"Warning: two digit token thats shouldnt: {token}"
-
-        # Add new token
-        token_id = self.last_id
-        self.token_to_id[token] = token_id
-        self.id_to_token.append(token)
-        self.last_id += 1
-        return token_id
-
-    def get_registry_token(self, insn, reg_id) -> Tokens:
-        if len(self.register_tokens) <= reg_id:
-            # Ensure the list is large enough
-            self.register_tokens.extend([None] * (reg_id - len(self.register_tokens) + 1))
-
-        register_str = insn.reg_name(reg_id)
-        token = None
-        if self.register_tokens[reg_id] is None:
-            token = self.PlatformToken(register_str)
-            self.register_tokens[reg_id] = token
+        if token_type_enum in TokenRaw._cache:
+            return TokenRaw._cache[token_type_enum]
         else:
-            token = self.register_tokens[reg_id]
-            assert str(token) == f"{self.platform}_{register_str}", "Token mismatch for register ID"
+            class TokenRawInner(TokenRaw):
+                """Raw token representation with numpy array of IDs and token type"""
+
+                def __init__(self, token_ids: npt.NDArray[np.int_]):
+                    """
+                    Initialize TokenRaw with token IDs and type
+
+                    Args:
+                        token_ids: Numpy array of token IDs
+                        token_type_enum: TokenType enum value
+                    """
+                    super().__init__()
+                    self.token_ids_array = token_ids
+                    if len(token_ids) == 0:
+                        raise ValueError("TokenRaw must have at least one token ID")
+
+                @classproperty
+                def token_type(cls) -> TokenType:
+                    """Return the type of this token representation"""
+                    return token_type_enum
+
+                @classmethod
+                def _from_token_ids(cls, token_ids: List[int]) -> 'TokenRawInner':
+                    """Create TokenRaw from token IDs - type must be determined from context"""
+                    return cls(np.array(token_ids, dtype=np.int_))
+
+                def get_token_ids(self) -> npt.NDArray[np.int_]:
+                    """Get the list of token IDs for this token representation"""
+                    return self.token_ids_array
+
+                def to_string(self) -> str:
+                    """Convert token to its string representation (for debugging only)"""
+                    return f"TokenRaw({token_type_enum.name}, {self.token_ids_array.tolist()})"
+
+                def to_asm_like(self) -> str:
+                    """Convert token to its string representation that resembles assembly syntax"""
+                    return f"raw:{token_type_enum.name}:{','.join(map(str, self.token_ids_array))}"
+
+                def resolve(self, vocab_manager: 'VocabularyManager') -> 'Tokens':
+                    """
+                    Resolve this TokenRaw into a concrete token using the VocabularyManager
+
+                    Args:
+                        vocab_manager: VocabularyManager instance to resolve token IDs
+
+                    Returns:
+                        Concrete token instance based on the token type and IDs
+                    """
+                    token_ids_list = self.get_token_ids()
+                    return vocab_manager._reconstruct_token_from_ids(token_type_enum, token_ids_list)
+
+            TokenRaw._cache[token_type_enum] = TokenRawInner
+            return TokenRawInner
 
-        return token
 
-    def get_token_id(self, token: str) -> int:
-        """Get the ID for a token, or -1 if not found"""
-        return self.token_to_id.get(token, -1)
-
-    def get_token_str(self, token_id: int) -> str:
-        """Get the token string for an ID, or empty string if not found"""
-        if 0 <= token_id < len(self.id_to_token):
-            return self.id_to_token[token_id]
-        return ""
-
-    def size(self) -> int:
-        """Return the number of tokens in the vocabulary"""
-        return len(self.id_to_token)
-
-    def to_dict(self) -> dict[str, int]:
-        """Convert to dictionary format for backward compatibility"""
-        return self.token_to_id.copy()
-
-    def _get_or_create_class_cache_token(self, cls, cache_attr: str, token_string: str) -> int:
-        """Utility method to get or create a class-level cached token ID"""
-        if not hasattr(cls, cache_attr) or getattr(cls, cache_attr) is None:
-            setattr(cls, cache_attr, self._private_add_token(token_string))
-        return getattr(cls, cache_attr)
-
-    def _create_inner_classes(self):
-        """Create inner classes that have access to this VocabularyManager instance"""
-        vocab_manager = self  # Capture the instance
-
-        class TokensInner(Tokens, ABC):
-            """Abstract base class for all token representations"""
-
-            @abstractmethod
-            def get_token_ids(self) -> List[int]:
-                """Get the list of token IDs for this token representation (order matters)"""
-                pass
-
-            @abstractmethod
-            def to_string(self) -> str:
-                """Convert token to its string representation (for debugging only)"""
-                pass
-
-
-
-        # Ensure TokensInner conforms to Tokens protocol
-        assert issubclass(TokensInner, Tokens)
-
-        class PlatformTokenInner(TokensInner, PlatformToken):
-            """Represents platform-specific tokens like x86 instructions, registers, etc."""
-            __slots__ = ('token', '_token_id')
-
-            def __init__(self, token: str):
-                if ' ' in token:
-                    raise ValueError(f"Token cannot contain spaces: '{token}'")
-                self.token = token
-                # Register the token and cache its ID
-                self._token_id = vocab_manager._private_add_token(f"{vocab_manager.platform}_{token}")
-
-            def get_token_ids(self) -> List[int]:
-                return [self._token_id]
-
-            def to_string(self) -> str:
-                return f"{vocab_manager.platform}_{self.token}"
-
-        # Ensure PlatformTokenInner conforms to both protocols
-        assert issubclass(PlatformTokenInner, Tokens)
-        assert issubclass(PlatformTokenInner, PlatformToken)
-
-        class ValuedConstTokenInner(TokensInner, ValuedConstToken):
-            """Represents a constant with a specific numeric value"""
-            __slots__ = ('value', '_token_ids')
-
-            def __init__(self, value: int):
-                self.value = value
-
-                # Handle negative values
-                is_negative = value < 0
-                abs_value = abs(value)
-
-                # Generate hex string with proper padding
-                hex_str = f"{abs_value:02X}"  # Always at least 2 digits, uppercase
-
-                if 0 <= value <= 0xFF:
-                    # Positive small value: single token
-                    token_string = f"VALUED_CONST_{hex_str}"
-                    self._token_ids = [vocab_manager._private_add_token(token_string)]
-                else:
-                    # Complex case: multiple tokens for values > 0xFF
-                    # Split hex string into 2-character chunks (bytes)
-                    if len(hex_str) % 2 == 1:
-                        hex_str = "0" + hex_str  # Pad to even length
-
-                    chunks = [hex_str[i:i+2] for i in range(0, len(hex_str), 2)]
-
-                    self._token_ids = []
-
-                    # Start token
-                    start_token_id = vocab_manager._get_or_create_class_cache_token(
-                        self.__class__, '_start_token_id', "VALUED_CONST_Lit_Start"
-                    )
-                    self._token_ids.append(start_token_id)
-
-                    # Minus token for negative values
-                    if is_negative:
-                        self._token_ids.append(vocab_manager.MemoryOperand(MemoryOperandSymbol.MINUS)._token_id)
-
-                    # 2-digit hex chunk tokens (00-FF)
-                    for chunk in chunks:
-                        token_string = f"VALUED_CONST_{chunk}"
-                        self._token_ids.append(vocab_manager._private_add_token(token_string))
-
-                    # End token
-                    end_token_id = vocab_manager._get_or_create_class_cache_token(
-                        self.__class__, '_end_token_id', "VALUED_CONST_Lit_End"
-                    )
-                    self._token_ids.append(end_token_id)
-
-            def get_token_ids(self) -> List[int]:
-                return self._token_ids.copy()
-
-            def to_string(self) -> str:
-                """Generate string representation for debugging"""
-                is_negative = self.value < 0
-                abs_value = abs(self.value)
-                hex_str = f"{abs_value:02X}"  # Always at least 2 digits, uppercase
-
-                if abs_value <= 0xFF and not is_negative:
-                    return f"VALUED_CONST_{hex_str}"
-                else:
-                    # Multi-token representation or negative value
-                    if len(hex_str) % 2 == 1:
-                        hex_str = "0" + hex_str
-
-                    chunks = [hex_str[i:i+2] for i in range(0, len(hex_str), 2)]
-
-                    name = "VALUED_CONST_Lit_Start"
-                    if is_negative:
-                        name += " VALUED_CONST_MINUS"
-                    for chunk in chunks:
-                        name += f" VALUED_CONST_{chunk}"
-                    name += " VALUED_CONST_Lit_End"
-                    return name
-
-        # Ensure ValuedConstTokenInner conforms to both protocols
-        assert issubclass(ValuedConstTokenInner, Tokens)
-        assert issubclass(ValuedConstTokenInner, ValuedConstToken)
-
-        class IdentifierInner(TokensInner, IdentifierToken, ABC):
-            """Abstract base class for identifiers with IDs"""
-            __slots__ = ('id', '_token_ids')
-
-            # Static cache for single hex digit tokens - shared across all Identifier instances
-            _digit_token_cache = {}  # "digit" -> token_id (0-F only)
-
-            def __init__(self, identifier_id: int):
-                IdentifierToken.__init__(self, identifier_id)
-                TokensInner.__init__(self)
-                self.id = identifier_id
-
-                # Generate and register tokens directly without using _generate_token_string
-                basename = self._get_basename()
-
-                if self.id < 16:
-                    hex_str = f"{self.id:X}"
-                    token_string = f"{basename}_{hex_str}"
-                    self._token_ids = [vocab_manager._private_add_token(token_string)]
-                else:
-                    # Complex case: multiple tokens using single hex digits
-                    id_str = f"{self.id:X}"  # Uppercase hex without padding for multi-token case
-
-                    # Register all tokens in sequence
-                    self._token_ids = []
-
-                    # Start token - use class-specific cache
-                    start_token_id = vocab_manager._get_or_create_class_cache_token(
-                        self.__class__, '_start_token_id', f"{basename}_Lit_Start"
-                    )
-                    self._token_ids.append(start_token_id)
-
-                    # Individual hex digit tokens (0-F only) - use shared cache
-                    for hex_digit in id_str:
-                        if hex_digit not in IdentifierInner._digit_token_cache:
-                            IdentifierInner._digit_token_cache[hex_digit] = vocab_manager._private_add_token(f"Identifier_Lit_{hex_digit}")
-                        self._token_ids.append(IdentifierInner._digit_token_cache[hex_digit])
-
-                    # End token - use class-specific cache
-                    end_token_id = vocab_manager._get_or_create_class_cache_token(
-                        self.__class__, '_end_token_id', f"{basename}_Lit_End"
-                    )
-                    self._token_ids.append(end_token_id)
-
-            @abstractmethod
-            def _get_basename(self) -> str:
-                """Get the base name for this identifier type"""
-                pass
-
-            def get_token_ids(self) -> List[int]:
-                return self._token_ids.copy()
-
-            def to_string(self) -> str:
-                """Generate string representation for debugging (recreates register_name_range output)"""
-                basename = self._get_basename()
-                if self.id < 16:
-                    hex_str = f"{self.id:X}"
-                    return f"{basename}_{hex_str}"
-                else:
-                    id_str = f"{self.id:X}"
-                    name = f"{basename}_Lit_Start"
-                    for hex_digit in id_str:
-                        name += f" Identifier_Lit_{hex_digit}"
-                    name += f" {basename}_Lit_End"
-                    return name
-
-        # Ensure IdentifierInner conforms to both protocols
-        assert issubclass(IdentifierInner, Tokens)
-        assert issubclass(IdentifierInner, IdentifierToken)
-
-        class BlockDefInner(TokensInner, BlockDefToken):
-            """Represents block definition tokens (Block_Def)"""
-            __slots__ = ('_token_id',)
-
-            def __init__(self):
-                # Register the token and cache its ID
-                self._token_id = vocab_manager._private_add_token("Block_Def")
-
-            def get_token_ids(self) -> List[int]:
-                return [self._token_id]
-
-            def to_string(self) -> str:
-                return "Block_Def"
-
-        # Ensure BlockDefInner conforms to both protocols
-        assert issubclass(BlockDefInner, Tokens)
-        assert issubclass(BlockDefInner, BlockDefToken)
-
-        class BlockInner(IdentifierInner, BlockToken):
-            """Represents block identifiers"""
-            __slots__ = ()
-
-            def __init__(self, block_id: int):
-                super().__init__(block_id)
-
-            def _get_basename(self) -> str:
-                return "Block"
-
-        # Ensure BlockInner conforms to both protocols
-        assert issubclass(BlockInner, IdentifierToken)
-        assert issubclass(BlockInner, BlockToken)
-
-        class OpaqueConstInner(IdentifierInner, OpaqueConstToken):
-            """Represents opaque constant identifiers"""
-            __slots__ = ()
-
-            def __init__(self, opaque_id: int):
-                super().__init__(opaque_id)
-
-            def _get_basename(self) -> str:
-                return "OPAQUE_CONST"
-
-        # Ensure OpaqueConstInner conforms to both protocols
-        assert issubclass(OpaqueConstInner, IdentifierToken)
-        assert issubclass(OpaqueConstInner, OpaqueConstToken)
-
-        class MemoryOperandTokenInner(TokensInner, MemoryOperandToken):
-            """Represents memory operand symbols like [, ], +, *"""
-            __slots__ = ('symbol', '_token_id')
-
-            def __init__(self, symbol: MemoryOperandSymbol):
-                self.symbol = symbol
-                # Register the token and cache its ID
-                self._token_id = vocab_manager._private_add_token(symbol.token_str())
-
-            def get_token_ids(self) -> List[int]:
-                return [self._token_id]
-
-            def to_string(self) -> str:
-                return self.symbol.token_str()
-
-        # Ensure MemoryOperandTokenInner conforms to both protocols
-        assert issubclass(MemoryOperandTokenInner, Tokens)
-        assert issubclass(MemoryOperandTokenInner, MemoryOperandToken)
-
-        class TokenSetInner(TokensInner):
-            """Represents a collection of tokens"""
-            __slots__ = ('tokens',)
-
-            def __init__(self, tokens: List[TokensInner]):
-                self.tokens = tokens
-
-            def get_token_ids(self) -> List[int]:
-                token_ids = []
-                for token in self.tokens:
-                    token_ids.extend(token.get_token_ids())
-                return token_ids
-
-            def to_string(self) -> str:
-                return " ".join(token.to_string() for token in self.tokens)
-
-            def __iter__(self):
-                return iter(self.tokens)
-
-            def __len__(self):
-                return len(self.tokens)
-
-            def append(self, token: TokensInner):
-                self.tokens.append(token)
-
-            def extend(self, tokens: List[TokensInner]):
-                self.tokens.extend(tokens)
-
-        # Assign the inner classes to instance variables WITHOUT the Inner suffix
-        self.TokensRepl = TokensInner
-        self.PlatformToken = PlatformTokenInner
-        self.Valued_Const = ValuedConstTokenInner
-        self.Identifier = IdentifierInner
-        self.Block_Def = BlockDefInner
-        self.Block = BlockInner
-        self.Opaque_Const = OpaqueConstInner
-        self.MemoryOperand = MemoryOperandTokenInner
-        self.TokenSet = TokenSetInner
 
 
 

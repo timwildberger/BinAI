@@ -5,13 +5,15 @@ Optimized function data storage using fixed-size arrays for better performance.
 import numpy as np
 from typing import Any, Iterator, Tuple, Optional, Dict, List
 from dataclasses import dataclass
+
+from .function_token_list import FunctionTokenList
 from .tokens import Tokens
 
 
 @dataclass
 class FunctionData:
     """Consolidated data structure for function analysis results"""
-    tokens: list[Tokens]
+    tokens: FunctionTokenList #list[Tokens]
     tokens_base64: str
     block_runlength_base64: str
     instruction_runlength_base64: str

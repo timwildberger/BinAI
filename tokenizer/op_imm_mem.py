@@ -3,7 +3,8 @@ import warnings
 from tokenizer.constant_handler import ConstantHandler
 from typing import List
 
-from tokenizer.tokens import Tokens, VocabularyManager, MemoryOperandSymbol
+from tokenizer.tokens import Tokens, MemoryOperandSymbol
+from tokenizer.token_manager import VocabularyManager
 
 
 def _register_registry_token(reg_id: int, insn, vocab_manager) -> Tokens:
@@ -97,7 +98,7 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
 
     if disp < 0:
         tokens.append(vocab_manager.MemoryOperand(MemoryOperandSymbol.MINUS))
-    elif has_reg or has_index:
+    elif has_disp and (has_reg or has_index):
         tokens.append(vocab_manager.MemoryOperand(MemoryOperandSymbol.PLUS))
 
 

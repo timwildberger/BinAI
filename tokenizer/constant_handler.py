@@ -1,5 +1,6 @@
 from typing import Dict, List, Tuple, Optional
-from tokenizer.tokens import VocabularyManager, TokenResolver, Tokens, OpaqueConstToken
+from tokenizer.tokens import TokenResolver, Tokens, OpaqueConstToken
+from tokenizer.token_manager import VocabularyManager
 
 
 class ConstantHandler:
