@@ -4,6 +4,7 @@ from enum import Enum, IntEnum
 from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
+from tokenizer.hashing_numpy import hash_continuous_array as np_hash
 
 T = TypeVar('T', bound='Tokens')
 
@@ -160,7 +161,7 @@ class Tokens(ABC):
 
     def __hash__(self) -> int:
         """Make tokens hashable based on class and token IDs"""
-        return hash((self.__class__.__name__, tuple(self.get_token_ids())))
+        return int(np_hash(self.get_token_ids()))
 
     def __eq__(self, other) -> bool:
         """Tokens are equal if they have the same class and same token IDs"""

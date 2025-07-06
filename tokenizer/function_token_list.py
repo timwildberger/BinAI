@@ -285,54 +285,30 @@ class FunctionTokenList:
             if new_size > 2**16:
                 1
 
-            new_token_ids = np.zeros(new_size, dtype=np.int32)
-            new_token_ids[:len(self.token_ids)] = self.token_ids
-            self.token_ids = new_token_ids
+            self.token_ids.resize(new_size, refcheck=False)
 
         # Resize type arrays if needed
         if self.last_index + types_needed > len(self.token_type_ids):
             new_size = max(len(self.token_type_ids) * 2, self.last_index + types_needed)
 
-            new_token_type_ids = np.zeros(new_size, dtype=np.int32)
-            new_token_start_lookup = np.zeros(new_size, dtype=np.int32)
-
-            new_token_type_ids[:len(self.token_type_ids)] = self.token_type_ids
-            new_token_start_lookup[:len(self.token_start_lookup)] = self.token_start_lookup
-
-            self.token_type_ids = new_token_type_ids
-            self.token_start_lookup = new_token_start_lookup
+            self.token_type_ids.resize(new_size, refcheck=False)
+            self.token_start_lookup.resize(new_size, refcheck=False)
 
         # Resize instruction arrays if needed
         if self.insn_count + insns_needed + 1 > len(self.insn_run_lengths):
             new_size = max(len(self.insn_run_lengths) * 2, self.insn_count + insns_needed)
 
-            new_insn_run_lengths = np.zeros(new_size, dtype=np.int32)
-            new_insn_idx_run_lengths = np.zeros(new_size, dtype=np.int32)
-            new_insn_strs = np.zeros(new_size, dtype=object)
-
-            new_insn_run_lengths[:len(self.insn_run_lengths)] = self.insn_run_lengths
-            new_insn_idx_run_lengths[:len(self.insn_idx_run_lengths)] = self.insn_idx_run_lengths
-            new_insn_strs[:len(self.insn_strs)] = self.insn_strs
-
-            self.insn_run_lengths = new_insn_run_lengths
-            self.insn_idx_run_lengths = new_insn_idx_run_lengths
-            self.insn_strs = new_insn_strs
+            self.insn_run_lengths.resize(new_size, refcheck=False)
+            self.insn_idx_run_lengths.resize(new_size, refcheck=False)
+            self.insn_strs.resize(new_size, refcheck=False)
 
         # Resize block arrays if needed
         if self.block_count >= len(self.block_insn_run_lengths):
             new_size = len(self.block_insn_run_lengths) * 2
 
-            new_block_insn_run_lengths = np.zeros(new_size, dtype=np.int32)
-            new_block_token_run_lengths = np.zeros(new_size, dtype=np.int32)
-            new_block_addrs = np.zeros(new_size, dtype=object)
-
-            new_block_insn_run_lengths[:len(self.block_insn_run_lengths)] = self.block_insn_run_lengths
-            new_block_token_run_lengths[:len(self.block_token_run_lengths)] = self.block_token_run_lengths
-            new_block_addrs[:len(self.block_addrs)] = self.block_addrs
-
-            self.block_insn_run_lengths = new_block_insn_run_lengths
-            self.block_token_run_lengths = new_block_token_run_lengths
-            self.block_addrs = new_block_addrs
+            self.block_insn_run_lengths.resize(new_size, refcheck=False)
+            self.block_token_run_lengths.resize(new_size, refcheck=False)
+            self.block_addrs.resize(new_size, refcheck=False)
 
     def iter_raw_tokens(self) -> Iterator['TokenRaw']:
         """Return an iterator for all raw tokens in this function"""

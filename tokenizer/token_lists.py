@@ -140,22 +140,14 @@ class InsnTokenList:
         # Resize token_ids if needed
         if current_end + token_idx_needed > len(self.token_ids):
             new_size = max(len(self.token_ids) * 2, current_end + token_idx_needed)
-            new_token_ids = np.zeros(new_size, dtype=np.int32)
-            new_token_ids[:len(self.token_ids)] = self.token_ids
-            self.token_ids = new_token_ids
+            self.token_ids.resize(new_size, refcheck=False)
 
         # Resize type arrays if needed
         if self.last_index + types_needed > len(self.token_type_ids):
             new_size = max(len(self.token_type_ids) * 2, self.last_index + types_needed)
 
-            new_token_type_ids = np.zeros(new_size, dtype=np.int32)
-            new_token_start_lookup = np.zeros(new_size, dtype=np.int32)
-
-            new_token_type_ids[:len(self.token_type_ids)] = self.token_type_ids
-            new_token_start_lookup[:len(self.token_start_lookup)] = self.token_start_lookup
-
-            self.token_type_ids = new_token_type_ids
-            self.token_start_lookup = new_token_start_lookup
+            self.token_type_ids.resize(new_size, refcheck=False)
+            self.token_start_lookup.resize(new_size, refcheck=False)
 
     def get_used_token_ids(self) -> np.ndarray:
         """Get the used portion of token_ids array"""
@@ -335,38 +327,22 @@ class BlockTokenList:
         # Resize token_ids if needed
         if current_token_pos + token_idx_needed > len(self.token_ids):
             new_size = max(len(self.token_ids) * 2, current_token_pos + token_idx_needed)
-            new_token_ids = np.zeros(new_size, dtype=np.int32)
-            new_token_ids[:len(self.token_ids)] = self.token_ids
-            self.token_ids = new_token_ids
+            self.token_ids.resize(new_size, refcheck=False)
 
         # Resize type arrays if needed
         if self.last_index + types_needed > len(self.token_type_ids):
             new_size = max(len(self.token_type_ids) * 2, self.last_index + types_needed)
 
-            new_token_type_ids = np.zeros(new_size, dtype=np.int32)
-            new_token_start_lookup = np.zeros(new_size, dtype=np.int32)
-
-            new_token_type_ids[:len(self.token_type_ids)] = self.token_type_ids
-            new_token_start_lookup[:len(self.token_start_lookup)] = self.token_start_lookup
-
-            self.token_type_ids = new_token_type_ids
-            self.token_start_lookup = new_token_start_lookup
+            self.token_type_ids.resize(new_size, refcheck=False)
+            self.token_start_lookup.resize(new_size, refcheck=False)
 
         # Resize instruction arrays if needed
         if self.insn_count + 1 >= len(self.insn_run_lengths):
             new_size = len(self.insn_run_lengths) * 2
 
-            new_insn_run_lengths = np.zeros(new_size, dtype=np.int32)
-            new_insn_idx_run_lengths = np.zeros(new_size, dtype=np.int32)
-            new_insn_strs = np.zeros(new_size, dtype=object)
-
-            new_insn_idx_run_lengths[:len(self.insn_idx_run_lengths)] = self.insn_idx_run_lengths
-            new_insn_run_lengths[:len(self.insn_run_lengths)] = self.insn_run_lengths
-            new_insn_strs[:len(self.insn_strs)] = self.insn_strs
-
-            self.insn_idx_run_lengths = new_insn_idx_run_lengths
-            self.insn_run_lengths = new_insn_run_lengths
-            self.insn_strs = new_insn_strs
+            self.insn_run_lengths.resize(new_size, refcheck=False)
+            self.insn_idx_run_lengths.resize(new_size, refcheck=False)
+            self.insn_strs.resize(new_size, refcheck=False)
 
     def get_used_token_ids(self) -> np.ndarray:
         """Get the used portion of token_ids array"""
