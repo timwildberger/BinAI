@@ -1,5 +1,5 @@
 from typing import Dict, List, Tuple, Optional
-from tokenizer.tokens import TokenResolver, Tokens, OpaqueConstToken
+from tokenizer.tokens import TokenResolver, Tokens, OpaqueConstToken, BlockToken
 from tokenizer.token_manager import VocabularyManager
 
 
@@ -82,7 +82,7 @@ class ConstantHandler:
             key=lambda x: x[2], reverse=True
         )
 
-    def create_opaque_mapping(self) -> Dict[Tokens, Tokens]:
+    def create_opaque_mapping(self) -> Dict[BlockToken, Tokens]:
         """
         Create mapping from old opaque tokens to new tokens based on sorted usage.
         This is used for reassigning IDs after sorting by usage.
