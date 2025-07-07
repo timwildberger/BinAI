@@ -92,7 +92,7 @@ def fill_constant_candidates(
     # Create constant handler for this function
     constant_handler = ConstantHandler(vocab_manager, resolver, constant_dict)
     temp_bbs: list[tuple[str, list[list[Tokens]]]] = []
-    block_list: list[dict[BlockToken, tuple[str, str]]] = []
+    block_list: list[dict[BlockToken, tuple[int, int]]] = []
     block_dict: dict[str, BlockToken] = {}  # hex value of Block address: block_token
 
     num_blocks = sum(1 for _ in func.blocks)
@@ -113,8 +113,8 @@ def fill_constant_candidates(
         block_list.append(
             {
                 block_token: (
-                    hex(func_min_addr),
-                    hex(func_max_addr),
+                    block.addr,
+                    block.addr + block.size,
                 )
             }
         )
