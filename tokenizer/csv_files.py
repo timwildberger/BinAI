@@ -6,6 +6,8 @@ import numpy as np
 
 from tokenizer.compact_base64_utils import base64_to_ndarray, base64_to_ndarray_vec
 from tokenizer.utils import register_name_range
+from tokenizer.function_token_list import FunctionTokenList
+from tokenizer.token_manager import VocabularyManager
 
 
 def extract_ldis_blocks_from_file(file_path):
@@ -220,7 +222,7 @@ def vocab_from_output(output_path: str) -> list[str]:
     return vocab
 
 
-def token_to_insn(input_path: str, output_path: str):
+def token_to_insn(input_path: str, output_path: str, vocab_manager: VocabularyManager):
     with open(input_path, newline='') as csvfile:
         reader = csv.reader(csvfile)
         token_list: list[tuple[str, str]] = []
@@ -236,7 +238,8 @@ def token_to_insn(input_path: str, output_path: str):
             tokens = base64_to_ndarray_vec(row[2])
             block_runlength = base64_to_ndarray_vec(row[3])
             insn_runlength = base64_to_ndarray_vec(row[4])
-            string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
+            #string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
+            reconst = FunctionTokenList.reconstruct_func_from_raw_bytes(tokens, block_runlength, insn_runlength, vocab_manager)
             token_list.append((function_name, string_stream))
 
     with open(output_path, mode="w", newline='', encoding="utf-8") as csvfile:

@@ -482,8 +482,9 @@ def build_vocab_tokenize_and_index(func_tokens: FunctionTokenList) -> tuple[npt.
 
 
 def main():
+    """
     print(f"STARTING DISASSEMBLY")
-    file_path = Path("../src/clamav/x86-clang-5.0-O1_sigtool").absolute()
+    file_path = Path("src/unrar/x86-clang-3.5-O0_unrar").absolute()
     # file_path = Path("../src/clamav/x86-gcc-5-O3_minigzipsh").absolute()
     pickle_file_path = file_path.parent / f"{file_path.name}.pkl"
     pickle_mainloop_file_path = file_path.parent / f"{file_path.name}.mainloop.pkl"
@@ -541,14 +542,16 @@ def main():
             writer.writerow(row)
 
     print("VERIFY OUTPUT")
-
+    """
     # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_runlength, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
     vocab: list[str] = vocab_from_output("output.csv")
     token_man = VocabularyManager.from_vocab(platform="x86", vocab_list=vocab)
-    
-    
-    
-    token_to_insn("output.csv", "reconstructed_disassembly.csv")
+    token_to_insn("output.csv", "reconstructed_disassembly.csv", token_man)
+
+
+
+
+
     #compare_csv_files("reconstructed_disassembly.csv", "readable_tokenized_disassembly.csv")
     # compare_csv_files("reconstructed_disassembly_test.csv", "readable_tokenized_disassembly.csv")
 

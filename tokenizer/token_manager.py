@@ -18,6 +18,8 @@ class VocabularyManager:
         self.token_to_id: dict[str, int] = {}  # dict: tokenstr to id
         self.last_id: int = 0  # starting with 0 and increasing
         self.registry_token_cache: list[Tokens] = [] # registry cache
+        self.id_to_token_type: list[TokenType] = []
+        # TODO Fill on Token class __init__
 
         # Create unique inner classes for this instance
         self._create_inner_classes()
@@ -28,10 +30,26 @@ class VocabularyManager:
         v_man = VocabularyManager(platform)
         v_man.id_to_token = vocab_list
         v_man.last_id = len(vocab_list)
+        platform_token = f"{platform}_"
 
         for index, value in enumerate(vocab_list):
             v_man.token_to_id[value] = index
 
+            token_type: int = TokenType.ERROR
+            if value.startswith(platform_token):
+                token_type = TokenType.PLATFORM
+            elif value.startswith("VALUED_"):
+                token_type = TokenType.VALUED_CONST
+            elif value == "Block_Def":
+                token_type = TokenType.BLOCK_DEF
+            elif value.startswith("Block_"):
+                token_type = TokenType.BLOCK
+            elif value.startswith("OPAQUE_"):
+                token_type = TokenType.OPAQUE_CONST
+            elif value.startswith("MEM_"):
+                token_type = TokenType.MEMORY_OPERAND
+            
+            v_man.id_to_token_type.append(token_type)
         return v_man
 
 

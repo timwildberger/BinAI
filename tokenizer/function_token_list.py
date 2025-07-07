@@ -41,6 +41,42 @@ class FunctionTokenList:
 
         self.view_parent: Optional['FunctionTokenList'] = None  # Parent FunctionTokenList if this is a view child
 
+
+    @staticmethod
+    def reconstruct_func_from_raw_bytes(tokens, block_runlength, insn_runlength, vocab_manager: Optional['VocabularyManager'] = None) -> str:
+        """Remaps token ids to string representation."""
+        new_list = FunctionTokenList(
+            num_blocks=-1,
+            vocab_manager=vocab_manager, init=False
+        )
+        # Token-level arrays (level 0)
+        new_list.token_ids = tokens
+        print(f"Token list: {new_list.token_ids}")
+        types = [t.value for t in vocab_manager.id_to_token_type]
+        print(f"Token types: {types}")
+        new_list.token_type_ids = np.array(vocab_manager.id_to_token_type)[new_list.token_ids]
+        print(new_list.token_type_ids)
+        new_list.token_start_lookup = None # TODO
+
+        # Instruction-level arrays (level 1)
+        new_list.insn_run_lengths = insn_runlength
+        print(f"Insn Run lengths: {new_list.insn_run_lengths}")
+        new_list.insn_idx_run_lengths = None # TODO
+        new_list.insn_strs = None # TODO
+
+        # Block-level arrays (level 2)
+        new_list.block_insn_run_lengths = block_runlength
+        print(f"Block run length: {new_list.block_insn_run_lengths}")
+        new_list.block_token_run_lengths = None # TODO
+        new_list.block_addrs = None # TODO
+
+
+        raise ValueError
+
+        return ""
+
+
+
     @staticmethod
     def with_same_size(other: 'FunctionTokenList', vocab_manager: Optional['VocabularyManager'] = None) -> 'FunctionTokenList':
         """Create a new FunctionTokenList with the same array sizes as another"""

@@ -97,6 +97,7 @@ class TokenType(IntEnum):
     OPAQUE_CONST = 5
     MEMORY_OPERAND = 6
     TOKEN_SET = 7
+    UNRESOLVED = -1
 
 
 class MemoryOperandSymbol(Enum):
@@ -306,6 +307,7 @@ class TokenRaw(Tokens, ABC):
     @abstractmethod
     def resolve(self, vocab_manager: 'VocabularyManager') -> 'Tokens': ...
 
+    @staticmethod
     def with_type(token_type_enum: TokenType) -> type['TokenRaw']:
         """
         Create a new TokenRaw with the specified token type.
