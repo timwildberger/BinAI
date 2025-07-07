@@ -454,7 +454,7 @@ def main_loop(instr_sets, cfg, constant_list,
     return function_manager
 
 
-def build_vocab_tokenize_and_index(func_tokens: FunctionTokenList) -> (npt.NDArray[np.int_], npt.NDArray[np.int_], npt.NDArray[np.int_]):
+def build_vocab_tokenize_and_index(func_tokens: FunctionTokenList) -> tuple[npt.NDArray[np.int_], npt.NDArray[np.int_], npt.NDArray[np.int_]]:
     """
     Updated function to work with FunctionTokenList for efficient token processing.
     Now expects a FunctionTokenList instance instead of raw block data.
