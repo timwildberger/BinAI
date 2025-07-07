@@ -210,28 +210,38 @@ def reverse_tokenization(
     return block_insns
 
 
-def token_to_insn(path: str):
-    with open(path, newline='') as csvfile:
+def vocab_from_output(output_path: str) -> list[str]:
+    with open(output_path, newline='') as csvfile:
         reader = csv.reader(csvfile)
-        token_dict: dict[str, str] = {}
+        csv_iter = iter(reader)
+        vocab: list[str] = []
+        for func_name, token in enumerate(next(csv_iter)[6][1:-1].split(",")):
+            vocab.append(token)
+    return vocab
+
+
+def token_to_insn(input_path: str, output_path: str):
+    with open(input_path, newline='') as csvfile:
+        reader = csv.reader(csvfile)
+        token_list: list[tuple[str, str]] = []
         vocab: dict[int, str] = {}
         csv_iter = iter(reader)
-        for index, token in enumerate(next(csv_iter)[6][1:-1].split(",")):
-            vocab[index] = token
-        print(vocab)
+        for func_name, token in enumerate(next(csv_iter)[6][1:-1].split(",")):
+            vocab[func_name] = token
 
         for row in reader:
-            index = row[0]
-            dubble_index = row[1]
+            function_name = row[0]
+            print(f"Function name: {function_name}")
+
             tokens = base64_to_ndarray_vec(row[2])
             block_runlength = base64_to_ndarray_vec(row[3])
             insn_runlength = base64_to_ndarray_vec(row[4])
             string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
-            token_dict[index] = string_stream
+            token_list.append((function_name, string_stream))
 
-    with open("reconstructed_disassembly.csv", mode="w", newline='', encoding="utf-8") as csvfile:
+    with open(output_path, mode="w", newline='', encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
-        for k, v in token_dict.items():
+        for k, v in token_list:
             writer.writerow([k, v])
 
 

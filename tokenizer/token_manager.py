@@ -17,10 +17,24 @@ class VocabularyManager:
         self.id_to_token: list[str] = []  # array: id to tokenstr
         self.token_to_id: dict[str, int] = {}  # dict: tokenstr to id
         self.last_id: int = 0  # starting with 0 and increasing
-        self.register_tokens = []
+        self.registry_token_cache: list[Tokens] = [] # registry cache
 
         # Create unique inner classes for this instance
         self._create_inner_classes()
+
+    @staticmethod
+    def from_vocab(platform: str, vocab_list: list[str]) -> 'VocabularyManager':
+        """Creates vocab from tokenizer output."""
+        v_man = VocabularyManager(platform)
+        v_man.id_to_token = vocab_list
+        v_man.last_id = len(vocab_list)
+
+        for index, value in enumerate(vocab_list):
+            v_man.token_to_id[value] = index
+
+        return v_man
+
+
 
     def _private_add_token(self, token: str) -> int:
         """Add a token to the vocabulary and return its ID"""
@@ -39,17 +53,17 @@ class VocabularyManager:
         return token_id
 
     def get_registry_token(self, insn, reg_id) -> Tokens:
-        if len(self.register_tokens) <= reg_id:
+        if len(self.registry_token_cache) <= reg_id:
             # Ensure the list is large enough
-            self.register_tokens.extend([None] * (reg_id - len(self.register_tokens) + 1))
+            self.registry_token_cache.extend([None] * (reg_id - len(self.registry_token_cache) + 1))
 
         register_str = insn.reg_name(reg_id)
         token = None
-        if self.register_tokens[reg_id] is None:
+        if self.registry_token_cache[reg_id] is None:
             token = self.PlatformToken(register_str)
-            self.register_tokens[reg_id] = token
+            self.registry_token_cache[reg_id] = token
         else:
-            token = self.register_tokens[reg_id]
+            token = self.registry_token_cache[reg_id]
             assert str(token) == f"{self.platform}_{register_str}", "Token mismatch for register ID"
 
         return token

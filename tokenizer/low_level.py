@@ -3,10 +3,10 @@ import pickle
 import csv, json
 import time
 from pathlib import Path
-from address_meta_data_lookup import AddressMetaDataLookup
-from compact_base64_utils import ndarray_to_base64
+from tokenizer.address_meta_data_lookup import AddressMetaDataLookup
+from tokenizer.compact_base64_utils import ndarray_to_base64
 from tokenizer.compact_base64_utils import base64_to_ndarray_vec
-from tokenizer.csv_files import parse_and_save_data_sections, token_to_insn, compare_csv_files
+from tokenizer.csv_files import parse_and_save_data_sections, token_to_insn, compare_csv_files, vocab_from_output
 from tokenizer.function_token_list import FunctionTokenList
 from tokenizer.op_imm_mem import tokenize_operand_memory, tokenize_operand_immediate
 from tokenizer.opaque_remapping import apply_opaque_mapping, apply_opaque_mapping_raw_optimized
@@ -104,7 +104,7 @@ def fill_constant_candidates(
 
     for block in func.blocks:
 
-        func_max_addr = max(func_min_addr, block.addr + block.size)
+        func_max_addr = max(block.addr, block.addr + block.size)
 
         # ------------------Register name of current Block---------------------
         block_addr = hex(block.addr)
@@ -172,11 +172,12 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
     for byte in insn.prefix:
         if byte in degenerate_prefixes:
             skip = True
-            for prefix_name in degenerate_prefixes[byte]:
+            for prefix_name in degenerate_prefixes[byte]: # Check for ambiguity for repne, repz, repnz, repe, rep
                 if insn.mnemonic.startswith(prefix_name):
                     token = vocab_manager.PlatformToken(prefix_name)
                     insn_tokens.append(token)
                     if VERIFICATION:
+                        assert insn_tokens2 is not None
                         insn_tokens2.append(token)
                     break
             else:
@@ -189,24 +190,28 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
             token = vocab_manager.PlatformToken(prefix_name)
             insn_tokens.append(token)
             if VERIFICATION:
+                assert insn_tokens2 is not None
                 insn_tokens2.append(token)
+
     token = vocab_manager.PlatformToken(insn.insn.insn_name())
     insn_tokens.append(token)
     if VERIFICATION:
+        assert insn_tokens2 is not None
         insn_tokens2.append(token)
+
     # interesting stuff: insn.group_name(insn.groups[0])
-    insn_list = []
     if hasattr(insn, "operands"):
         # print("\n")
         # go through all operands
         for op in insn.operands:
-            insn_list.append(op.type)
-            if op.type == 0 or op.type > 3:
+            if op.type == 0 or op.type > 3: # angr wrapper only registers REGISTER (1), IMMEDIATE (2), MEMORY (3)
                 raise Exception
+            
             if op.type == 1:  # REGISTER
                 token = vocab_manager.get_registry_token(insn, op.reg)
                 insn_tokens.append(token)
                 if VERIFICATION:
+                    assert insn_tokens2 is not None
                     insn_tokens2.append(token)
                 # reg_name = insn.reg_name(op.reg)
                 # if reg_name not in symbol_tokens:
@@ -217,6 +222,7 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
                     insn, lookup, op, func_max_addr, func_min_addr, constant_handler)
                 insn_tokens.extend(immediate_tokens)
                 if VERIFICATION:
+                    assert insn_tokens2 is not None
                     insn_tokens2.extend(immediate_tokens)
 
             elif op.type == 3:  # MEMORY
@@ -225,6 +231,7 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
                                                         vocab_manager, constant_handler)
                 insn_tokens.extend(memory_tokens)
                 if VERIFICATION:
+                    assert insn_tokens2 is not None
                     insn_tokens2.extend(memory_tokens)
 
     else:
@@ -275,7 +282,7 @@ def disassemble_to_tokens(path, cfg, constant_list, with_pickled=False, project=
         func_disas: dict[str, list[dict[str, list[str]]]] = {}
 
         data = {}
-        with open("./data_store.json") as f:
+        with open("tokenizer/data_store.json") as f:
             data = json.load(f)
 
         inv_prefix_tokens: dict[str, str] = data["inv_prefix_tokens"]
@@ -317,12 +324,13 @@ def disassemble_to_tokens(path, cfg, constant_list, with_pickled=False, project=
         func_disas_token = kwargs["func_disas_token"]
         func_names = kwargs["func_names"]
 
+    
     # Initialize VocabularyManager
     vocab_manager = VocabularyManager("x86")
 
     # Initialize the resolver for token management
     resolver = TokenResolver()
-    instr_sets = InstructionSets()
+    instr_sets = InstructionSets("tokenizer/data_store.json")
     kwargs.update(dict(resolver=resolver, instr_sets=instr_sets))
 
     function_manager = main_loop(vocab_manager=vocab_manager, **kwargs)
@@ -535,8 +543,13 @@ def main():
     print("VERIFY OUTPUT")
 
     # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_runlength, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
-    token_to_insn("output.csv")
-    compare_csv_files("reconstructed_disassembly.csv", "readable_tokenized_disassembly.csv")
+    vocab: list[str] = vocab_from_output("output.csv")
+    token_man = VocabularyManager.from_vocab(platform="x86", vocab_list=vocab)
+    
+    
+    
+    token_to_insn("output.csv", "reconstructed_disassembly.csv")
+    #compare_csv_files("reconstructed_disassembly.csv", "readable_tokenized_disassembly.csv")
     # compare_csv_files("reconstructed_disassembly_test.csv", "readable_tokenized_disassembly.csv")
 
     # print(f"Output and reconstruction equal? {filecmp.cmp("reconstructed_disassembly_test.csv", "reconstructed_disassembly.csv", shallow=False)}")

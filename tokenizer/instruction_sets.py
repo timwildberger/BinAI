@@ -9,7 +9,7 @@ class InstructionSets:
     Provides easy access to instruction sets loaded from data store.
     """
 
-    def __init__(self, data_store_path: str = "./data_store.json"):
+    def __init__(self, data_store_path: str = "tokenizer/data_store.json"):
         """
         Initialize instruction sets from data store.
 
