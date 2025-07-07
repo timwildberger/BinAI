@@ -1,3 +1,4 @@
+from tokenizer.function_token_list import FunctionTokenList
 from tokenizer.token_lists import BlockTokenList
 from tokenizer.token_manager import VocabularyManager
 from tokenizer.tokens import Tokens, TokenType, TokenRaw
@@ -43,7 +44,7 @@ def apply_opaque_mapping(temp_bbs, opaque_mapping, constant_handler=None):
     return updated_bbs
 
 
-def apply_opaque_mapping_raw_optimized(function_token_list, opaque_mapping, vocab_manager: VocabularyManager, constant_handler=None):
+def apply_opaque_mapping_raw_optimized(function_token_list: FunctionTokenList, opaque_mapping, vocab_manager: VocabularyManager, constant_handler=None):
     """
     Apply opaque token mapping using raw tokens for efficiency, only resolving when necessary.
 
@@ -57,9 +58,8 @@ def apply_opaque_mapping_raw_optimized(function_token_list, opaque_mapping, voca
         Updated FunctionTokenList with remapped tokens
     """
 
-
     # Create a new FunctionTokenList for the result
-    updated_function = function_token_list.with_same_size(function_token_list, vocab_manager)
+    updated_function = FunctionTokenList.with_same_size(function_token_list, vocab_manager)
 
     # Convert opaque_mapping to work with token IDs if it's using token objects
     id_mapping = {}

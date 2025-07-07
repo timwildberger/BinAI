@@ -7,13 +7,6 @@ from tokenizer.tokens import Tokens, MemoryOperandSymbol
 from tokenizer.token_manager import VocabularyManager
 
 
-def _register_registry_token(reg_id: int, insn, vocab_manager) -> Tokens:
-    """Helper method to register a register token if it doesn't exist."""
-    if reg_id != 0:
-        reg_name = insn.reg_name(reg_id)
-        if reg_name not in symbol_tokens:
-            symbol_tokens[reg_name] = vocab_manager.PlatformToken(reg_name)
-
 
 size_map = {
     1: "byte_ptr",

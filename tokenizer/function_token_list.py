@@ -39,7 +39,10 @@ class FunctionTokenList:
         self.block_count = 0  # Total block count
         self.view_child: Optional['BlockTokenList'] = None
 
-    def with_same_size(self, other: 'FunctionTokenList', vocab_manager: Optional['VocabularyManager'] = None) -> 'FunctionTokenList':
+        self.view_parent: Optional['FunctionTokenList'] = None  # Parent FunctionTokenList if this is a view child
+
+    @staticmethod
+    def with_same_size(other: 'FunctionTokenList', vocab_manager: Optional['VocabularyManager'] = None) -> 'FunctionTokenList':
         """Create a new FunctionTokenList with the same array sizes as another"""
         new_list = FunctionTokenList(
             num_blocks=len(other.block_insn_run_lengths),
