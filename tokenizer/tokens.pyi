@@ -8,14 +8,15 @@ import numpy.typing as npt
 T = TypeVar('T', bound='Tokens')
 
 class TokenType(IntEnum):
-    ERROR: int
-    PLATFORM: int
-    VALUED_CONST: int
-    BLOCK_DEF: int
-    BLOCK: int
-    OPAQUE_CONST: int
-    MEMORY_OPERAND: int
-    TOKEN_SET: int
+    ERROR: 'TokenType'
+    PLATFORM: 'TokenType'
+    VALUED_CONST: 'TokenType'
+    BLOCK_DEF: 'TokenType'
+    BLOCK: 'TokenType'
+    OPAQUE_CONST: 'TokenType'
+    MEMORY_OPERAND: 'TokenType'
+    TOKEN_SET: 'TokenType'
+    UNRESOLVED: 'TokenType'
 
 class MemoryOperandSymbol(Enum):
     OPEN_BRACKET: str

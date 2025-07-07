@@ -5,7 +5,6 @@ import numpy as np
 from numpy import typing as npt
 
 
-
 class TokenUtils:
     """Utility functions for token caching with reverse mapping"""
 
@@ -17,7 +16,7 @@ class TokenUtils:
             token_id = getattr(cls, cache_attr)
 
         if token_id is None:
-            token_id = vocab_manager._private_add_token(token_string)
+            token_id = vocab_manager._private_add_token(token_string, cls)
             setattr(cls, cache_attr, token_id)
 
         return token_id
@@ -120,7 +119,7 @@ class TokenUtils:
             hex_str = hex(hex_value)[2:].upper()
             hex_str = "0" * (hex_digits - len(hex_str)) + hex_str
 
-            token_lambda = lambda: vocab_manager._private_add_token(f"{basename}_{hex_str}")
+            token_lambda = lambda: vocab_manager._private_add_token(f"{basename}_{hex_str}", token_class)
             return [TokenUtils.cache_numeric_token(
                 token_class, f'_{basename}_cache', hex_value, token_lambda, max_key
             )]
@@ -141,11 +140,11 @@ class TokenUtils:
             for hex_value in hex_values:
                 hex_str = hex(hex_value)[2:].upper()
                 hex_str = "0" * (hex_digits - len(hex_str)) + hex_str
-                token_lambda = lambda: vocab_manager._private_add_token(f"{inner_lit_name}_{hex_str}")
+                token_lambda = lambda: vocab_manager._private_add_token(f"{inner_lit_name}_{hex_str}", inner_token_class)
                 digit_token_id = TokenUtils.cache_numeric_token(inner_token_class, f'_{inner_lit_name}_cache',
                                                                 hex_value, token_lambda, max_key)
                 token_ids.append(digit_token_id)
-
+                token_lambda = lambda: vocab_manager._private_add_token(f"{inner_lit_name}_{hex_str}")
             token_ids.append(TokenUtils.cache_specific_token(
                 token_class, '_end_token_id', f"{basename}_Lit_End", vocab_manager
             ))

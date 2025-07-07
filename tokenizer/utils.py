@@ -1,3 +1,6 @@
+import numpy as np
+import numpy.typing as npt
+
 def register_name_range(id: int, basename: str) -> str:
     """
     Creates tokens for blocks.
@@ -19,3 +22,15 @@ def register_name_range(id: int, basename: str) -> str:
     return name
 
 
+
+
+def CA_BArle_to_CBrle(c: npt.NDArray[np.int_], b: npt.NDArray[np.int_]) -> npt.NDArray[np.int_]:
+    # we need indecies to be able to us searchsorted - require strictly increasing
+    c = c.cumsum()
+    b = b.cumsum()
+
+    # right side matches cumsum the excluded ending index
+    x = np.searchsorted(c, b, side='right')
+    # these are indecies so we need to convert back to runlengths encoding
+    b[1:] = x[1:] - x[:-1]
+    return b
