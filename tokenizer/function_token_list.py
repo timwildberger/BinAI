@@ -5,7 +5,7 @@ from typing import Iterator, Optional
 from tokenizer.token_manager import VocabularyManager
 from tokenizer.tokens import Tokens, TokenType
 from tokenizer.token_lists import InsnTokenList, BlockTokenList
-from tokenizer.utils import CA_BArle_to_CBrle
+from tokenizer.utils import CA_BArle_to_CBrle, run_length_and_last_type
 
 
 class FunctionTokenList:
@@ -49,7 +49,42 @@ class FunctionTokenList:
         self.view_child: Optional['BlockTokenList'] = None
 
         self.view_parent: Optional['FunctionTokenList'] = None  # Parent FunctionTokenList if this is a view child
+    def run_length_and_last_type(type_ids: npt.NDArray[np.int_], start_set: npt.NDArray[np.int_],
+                                 end_set: npt.NDArray[np.int_]) -> (npt.NDArray[np.int_], npt.NDArray[np.int_]):
+        # Step 1: Create masks for start and end values
+        start_mask = np.isin(type_ids, start_set)
+        end_mask = np.isin(type_ids, end_set)
 
+        # Step 2: Get the indices where starts and ends occur
+        arange = np.arange(len(type_ids), dtype=np.uint32)
+        start_idx = arange[start_mask].ravel()
+        end_idx = arange[end_mask].ravel()  # probably better contiguous
+        assert len(start_idx) == len(end_idx), "invalid data: some literals do not open or close"
+        if len(start_idx) == 0:
+            return np.ones_like(type_ids, dtype=np.uint8), type_ids
+
+        # Step 2: using cumsum we can model the problem as particles that annihilate with their antiparticles
+        particles = start_mask.view(np.int8) - end_mask.view(np.int8)
+
+        # Step 3: Create segment mask where we identify valid regions
+        # this mask always drops to 0 one early but actually that is super useful
+        # this must be int8 otherwise we cannot view it as bool later
+        segment_mask = np.cumsum(particles, dtype=np.int8)
+        assert np.all(np.abs(segment_mask) <= 1), "invalid data: nested literal segments"
+
+        # Step 4: Find segment lengths
+        long_segment_length = (end_idx - start_idx + 1).astype(np.uint8)
+        anti_segment_mask = ~ segment_mask.view(dtype=np.bool_)
+        new_segment_idx = anti_segment_mask.cumsum(dtype=np.uint32)[start_idx]
+
+        # Step 5: Prepare result array to hold run lengths
+        result = np.ones(len(type_ids) - long_segment_length.sum(dtype=np.uint32) + len(long_segment_length),
+                         dtype=np.uint8)
+
+        # Step 6: Assign run lengths based on the identified segments
+        result[new_segment_idx] = long_segment_length
+
+        return result, type_ids[anti_segment_mask]
 
     @staticmethod
     def reconstruct_func_from_raw_bytes(tokens, block_idx_runlength, insn_idx_runlength, vocab_manager: Optional['VocabularyManager'] = None) -> 'FunctionTokenList':
@@ -65,7 +100,7 @@ class FunctionTokenList:
         
         # Token-level arrays (level 0)
         result.token_ids = tokens.astype(np.int16)
-        metatoken_idx_run_length, result.metatoken_type_ids = FunctionTokenList.run_length_and_last_type(
+        metatoken_idx_run_length, result.metatoken_type_ids = run_length_and_last_type(
             tokens,
             vocab_manager.lit_starts,
             vocab_manager.lit_ends
@@ -104,44 +139,6 @@ class FunctionTokenList:
         new_list.block_metatoken_run_lengths = np.zeros_like(other.block_metatoken_run_lengths)
         new_list.block_addrs = np.zeros_like(other.block_addrs)
         return new_list
-
-    @staticmethod
-    def run_length_and_last_type(type_ids: npt.NDArray[np.int_], start_set: npt.NDArray[np.int_],
-                                 end_set: npt.NDArray[np.int_]) -> (npt.NDArray[np.int_], npt.NDArray[np.int_]):
-        # Step 1: Create masks for start and end values
-        start_mask = np.isin(type_ids, start_set)
-        end_mask = np.isin(type_ids, end_set)
-
-        # Step 2: Get the indices where starts and ends occur
-        arange = np.arange(len(type_ids), dtype=np.uint32)
-        start_idx = arange[start_mask].ravel()
-        end_idx = arange[end_mask].ravel()  # probably better contiguous
-        assert len(start_idx) == len(end_idx), "invalid data: some literals do not open or close"
-        if len(start_idx) == 0:
-            return np.ones_like(type_ids, dtype=np.uint8), type_ids
-
-        # Step 2: using cumsum we can model the problem as particles that annihilate with their antiparticles
-        particles = start_mask.view(np.int8) - end_mask.view(np.int8)
-
-        # Step 3: Create segment mask where we identify valid regions
-        # this mask always drops to 0 one early but actually that is super useful
-        # this must be int8 otherwise we cannot view it as bool later
-        segment_mask = np.cumsum(particles, dtype=np.int8)
-        assert np.all(np.abs(segment_mask) <= 1), "invalid data: nested literal segments"
-
-        # Step 4: Find segment lengths
-        long_segment_length = (end_idx - start_idx + 1).astype(np.uint8)
-        anti_segment_mask = ~ segment_mask.view(dtype=np.bool_)
-        new_segment_idx = anti_segment_mask.cumsum(dtype=np.uint32)[start_idx]
-
-        # Step 5: Prepare result array to hold run lengths
-        result = np.ones(len(type_ids) - long_segment_length.sum(dtype=np.uint32) + len(long_segment_length),
-                         dtype=np.uint8)
-
-        # Step 6: Assign run lengths based on the identified segments
-        result[new_segment_idx] = long_segment_length
-
-        return result, type_ids[anti_segment_mask]
 
     def set_vocab_manager(self, vocab_manager: 'VocabularyManager'):
         """Set the vocabulary manager for token reconstruction"""

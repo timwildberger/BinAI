@@ -3,10 +3,18 @@ from abc import ABC, abstractmethod
 from typing import List
 import numpy as np
 import numpy.typing as npt
+from enum import Enum
 
 from tokenizer.token_utils import TokenUtils
 from tokenizer.tokens import Tokens, TokenType, PlatformToken, ValuedConstToken, IdentifierToken, BlockDefToken, \
     BlockToken, OpaqueConstToken, MemoryOperandToken, MemoryOperandSymbol
+
+
+class LitTokenType(Enum):
+    """Enum to specify if a token is a regular token, Lit_Start, or Lit_End token"""
+    REGULAR = "regular"
+    LIT_START = "lit_start"
+    LIT_END = "lit_end"
 
 
 class VocabularyManager:
@@ -18,8 +26,15 @@ class VocabularyManager:
         self.token_to_id: dict[str, int] = {}  # dict: tokenstr to id
         self.last_id: int = 0  # starting with 0 and increasing
         self.registry_token_cache: list[Tokens] = [] # registry cache
-        self.id_to_token_type: list[TokenType] = []
-        # TODO Fill on Token class __init__
+
+        # Preallocated numpy arrays with different initial capacities
+        self._id_to_token_type: npt.NDArray[np.int8] = np.full(256, TokenType.ERROR, dtype=np.int8)
+
+        # Smaller initial capacity for lit caches since they're sparse
+        self._lit_start_cache: npt.NDArray[np.int_] = np.empty(4, dtype=np.int_)
+        self._lit_end_cache: npt.NDArray[np.int_] = np.empty(4, dtype=np.int_)
+        self._lit_start_count = 0  # Track actual entries in lit_start_cache
+        self._lit_end_count = 0    # Track actual entries in lit_end_cache
 
         # Create unique inner classes for this instance
         self._create_inner_classes()
@@ -31,6 +46,11 @@ class VocabularyManager:
         v_man.id_to_token = vocab_list
         v_man.last_id = len(vocab_list)
         platform_token = f"{platform}_"
+
+        # Initialize numpy arrays with proper size
+        token_types = []
+        lit_start_tokens = []
+        lit_end_tokens = []
 
         for index, value in enumerate(vocab_list):
             v_man.token_to_id[value] = index
@@ -49,12 +69,25 @@ class VocabularyManager:
             elif value.startswith("MEM_"):
                 token_type = TokenType.MEMORY_OPERAND
             
-            v_man.id_to_token_type.append(token_type)
+            token_types.append(token_type)
+
+            # Track Lit_Start and Lit_End tokens
+            if "_Lit_Start" in value:
+                lit_start_tokens.append(index)
+
+            if "_Lit_End" in value:
+                lit_end_tokens.append(index)
+
+        # Convert to numpy arrays
+        v_man._id_to_token_type = np.array(token_types, dtype=np.int_)
+        v_man._lit_start_cache = np.array(lit_start_tokens, dtype=np.int_)
+        v_man._lit_end_cache = np.array(lit_end_tokens, dtype=np.int_)
+
         return v_man
 
 
 
-    def _private_add_token(self, token: str) -> int:
+    def _private_add_token(self, token: str, token_cls: type[Tokens], lit_type: LitTokenType = LitTokenType.REGULAR) -> int:
         """Add a token to the vocabulary and return its ID"""
         if token in self.token_to_id:
             return self.token_to_id[token]
@@ -67,8 +100,74 @@ class VocabularyManager:
         token_id = self.last_id
         self.token_to_id[token] = token_id
         self.id_to_token.append(token)
+
+        # Get token type directly from the token class
+        token_type = token_cls.token_type
+
+        # Check if we need to expand token type capacity
+        if token_id >= len(self._id_to_token_type):
+            # Double the capacity
+            old_capacity = len(self._id_to_token_type)
+            new_capacity = old_capacity * 2
+
+            # Resize id_to_token_type array
+            new_token_type_array = np.empty(old_capacity, dtype=np.int8)
+            new_token_type_array[:new_capacity] = self._id_to_token_type[:old_capacity]
+            self._id_to_token_type = new_token_type_array
+
+        # Set token type
+        self._id_to_token_type[token_id] = token_type
+
+        # Handle lit cache entries - only add if it's a lit token
+        if lit_type == LitTokenType.LIT_START:
+            # Expand lit_start_cache if needed
+            if self._lit_start_count >= len(self._lit_start_cache):
+                old_capacity = len(self._lit_start_cache)
+                new_capacity = old_capacity * 2
+                new_cache = np.empty(new_capacity, dtype=np.int_)
+                new_cache[:old_capacity] = self._lit_start_cache[:old_capacity]
+                self._lit_start_cache = new_cache
+
+            self._lit_start_cache[self._lit_start_count] = token_id
+            self._lit_start_count += 1
+
+        elif lit_type == LitTokenType.LIT_END:
+            # Expand lit_end_cache if needed
+            if self._lit_end_count >= len(self._lit_end_cache):
+                old_capacity = len(self._lit_end_cache)
+                new_capacity = old_capacity * 2
+                new_cache = np.empty(new_capacity, dtype=np.int_)
+                new_cache[:old_capacity] = self._lit_end_cache[:old_capacity]
+                self._lit_end_cache = new_cache
+
+            self._lit_end_cache[self._lit_end_count] = token_id
+            self._lit_end_count += 1
+
+        # Regular tokens don't get added to lit caches at all
+
         self.last_id += 1
         return token_id
+
+    @property
+    def id_to_token_type(self) -> npt.NDArray[np.int8]:
+        """Get readonly view of id_to_token_type array"""
+        result = self._id_to_token_type[:self.last_id].view()
+        result.flags.writeable = False
+        return result
+
+    @property
+    def lit_starts(self) -> npt.NDArray[np.int_]:
+        """Get readonly view of lit_start_cache array"""
+        result = self._lit_start_cache[:self._lit_start_count].view()
+        result.flags.writeable = False
+        return result
+
+    @property
+    def lit_ends(self) -> npt.NDArray[np.int_]:
+        """Get readonly view of lit_end_cache array"""
+        result = self._lit_end_cache[:self._lit_end_count].view()
+        result.flags.writeable = False
+        return result
 
     def get_registry_token(self, insn, reg_id) -> Tokens:
         if len(self.registry_token_cache) <= reg_id:
@@ -112,17 +211,17 @@ class VocabularyManager:
         if index < 0 or index >= insn_token_list.last_index:
             raise IndexError(f"Token index {index} out of bounds (0 to {insn_token_list.last_index - 1})")
 
-        if insn_token_list.token_start_lookup is None:
+        if insn_token_list.metatoken_start_lookup is None:
             raise ValueError("Cannot get token from invalidated view")
 
-        token_type = TokenType(insn_token_list.token_type_ids[index])
+        token_type = TokenType(insn_token_list.metatoken_type_ids[index])
 
         # Get token IDs for this specific token
-        start_pos = insn_token_list.token_start_lookup[index-1] if index > 0 else 0
+        start_pos = insn_token_list.metatoken_start_lookup[index - 1] if index > 0 else 0
         if index == insn_token_list.last_index - 1:
             end_pos = len(insn_token_list.get_used_token_ids())
         else:
-            end_pos = insn_token_list.token_start_lookup[index]
+            end_pos = insn_token_list.metatoken_start_lookup[index]
 
         token_ids = insn_token_list.token_ids[start_pos:end_pos].tolist()
         return self._reconstruct_token_from_ids(token_type, token_ids)
@@ -182,7 +281,7 @@ class VocabularyManager:
                     raise ValueError(f"Token cannot contain spaces: '{token}'")
                 self.token = token
                 # Register the token and cache its ID
-                self._token_id = vocab_manager._private_add_token(f"{vocab_manager.platform}_{token}")
+                self._token_id = vocab_manager._private_add_token(f"{vocab_manager.platform}_{token}", self.__class__)
 
             @classmethod
             def _from_token_ids(cls, token_ids: List[int]) -> 'PlatformTokenInner':
@@ -228,7 +327,8 @@ class VocabularyManager:
 
                 # Convert hex string chunks to integer values
                 hex_values = [int(hex_str[i:i+2], 16) for i in range(0, len(hex_str), 2)]
-                self._token_ids = TokenUtils.encode_tokens("VALUED_CONST", "VALUED_CONST", hex_values, vocab_manager,
+                hex_values_array = np.array(hex_values, dtype=np.int_)
+                self._token_ids = TokenUtils.encode_tokens("VALUED_CONST", "VALUED_CONST", hex_values_array, vocab_manager,
                                                            token_class=self.__class__, inner_token_class=self.__class__,
                                                            max_key=256, include_minus=is_negative)
 
@@ -289,7 +389,8 @@ class VocabularyManager:
                 hex_str = f"{self.id:X}"
                 # Convert hex string characters to integer values
                 hex_values = [int(c, 16) for c in hex_str]
-                self._token_ids = TokenUtils.encode_tokens(basename, "Identifier_Lit", hex_values,
+                hex_values_array = np.array(hex_values, dtype=np.int_)
+                self._token_ids = TokenUtils.encode_tokens(basename, "Identifier_Lit", hex_values_array,
                                                            vocab_manager, token_class=self.__class__,
                                                            inner_token_class=IdentifierInner, max_key=16)
 
@@ -347,7 +448,7 @@ class VocabularyManager:
 
             def __init__(self):
                 # Register the token and cache its ID
-                self._token_id = vocab_manager._private_add_token("Block_Def")
+                self._token_id = vocab_manager._private_add_token("Block_Def", self.__class__)
 
             @classmethod
             def _from_token_ids(cls, token_ids: List[int]) -> 'BlockDefInner':
@@ -418,12 +519,12 @@ class VocabularyManager:
             def __init__(self, symbol: MemoryOperandSymbol):
                 self.symbol = symbol
                 # Register the token and cache its ID
-                self._token_id = vocab_manager._private_add_token(symbol.token_str())
-                
+                self._token_id = vocab_manager._private_add_token(symbol.token_str(), self.__class__)
+
             @classmethod
             def _from_enum(cls, symbol):
                 return cls(symbol)
-            
+
             @classmethod
             def _get_enum_token_cache(cls) -> MemoryOperandToken.EnumTokenCache:
                 return cls._token_cache
