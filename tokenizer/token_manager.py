@@ -3,18 +3,10 @@ from abc import ABC, abstractmethod
 from typing import List
 import numpy as np
 import numpy.typing as npt
-from enum import Enum
 
 from tokenizer.token_utils import TokenUtils
 from tokenizer.tokens import Tokens, TokenType, PlatformToken, ValuedConstToken, IdentifierToken, BlockDefToken, \
-    BlockToken, OpaqueConstToken, MemoryOperandToken, MemoryOperandSymbol
-
-
-class LitTokenType(Enum):
-    """Enum to specify if a token is a regular token, Lit_Start, or Lit_End token"""
-    REGULAR = "regular"
-    LIT_START = "lit_start"
-    LIT_END = "lit_end"
+    BlockToken, OpaqueConstToken, MemoryOperandToken, MemoryOperandSymbol, LitTokenType
 
 
 class VocabularyManager:
@@ -72,16 +64,18 @@ class VocabularyManager:
             token_types.append(token_type)
 
             # Track Lit_Start and Lit_End tokens
-            if "_Lit_Start" in value:
+            if "_LIT_START" in value.upper():
                 lit_start_tokens.append(index)
 
-            if "_Lit_End" in value:
+            if "_LIT_END" in value.upper():
                 lit_end_tokens.append(index)
 
         # Convert to numpy arrays
         v_man._id_to_token_type = np.array(token_types, dtype=np.int_)
         v_man._lit_start_cache = np.array(lit_start_tokens, dtype=np.int_)
+        v_man._lit_start_count = len(lit_start_tokens)
         v_man._lit_end_cache = np.array(lit_end_tokens, dtype=np.int_)
+        v_man._lit_end_count = len(lit_end_tokens)
 
         return v_man
 

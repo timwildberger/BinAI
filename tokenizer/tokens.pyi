@@ -16,6 +16,7 @@ class TokenType(IntEnum):
     OPAQUE_CONST: 'TokenType'
     MEMORY_OPERAND: 'TokenType'
     TOKEN_SET: 'TokenType'
+    IDENTIFIER_LITERAL: 'TokenType'
     UNRESOLVED: 'TokenType'
 
 class MemoryOperandSymbol(Enum):
@@ -169,3 +170,9 @@ class TokenRaw(Tokens):
 
     @staticmethod
     def with_type(token_type_enum: TokenType) -> type['TokenRaw']: ...
+
+
+class LitTokenType(Enum):
+    REGULAR: 'LitTokenType'
+    LIT_START: 'LitTokenType'
+    LIT_END: 'LitTokenType'

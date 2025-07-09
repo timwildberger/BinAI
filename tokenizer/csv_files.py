@@ -240,12 +240,37 @@ def token_to_insn(input_path: str, output_path: str, vocab_manager: VocabularyMa
             insn_runlength = base64_to_ndarray_vec(row[4])
             #string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
             reconst = FunctionTokenList.reconstruct_func_from_raw_bytes(tokens, block_runlength, insn_runlength, vocab_manager)
+            #todo
+
             token_list.append((function_name, string_stream))
 
     with open(output_path, mode="w", newline='', encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
         for k, v in token_list:
             writer.writerow([k, v])
+
+def token_to_functions(input_path: str):
+    with open(input_path, newline='') as csvfile:
+        reader = csv.reader(csvfile)
+
+        vocab = []
+        for token in next(iter(reader))[6][1:-1].split(","):
+            vocab.append(token)
+        token_man = VocabularyManager.from_vocab(platform="x86", vocab_list=vocab)
+
+        for row in reader:
+            function_name = row[0]
+            function_duplicate = int(row[1])
+            print(f"Function name: {function_name} ({function_duplicate})")
+
+            tokens = base64_to_ndarray_vec(row[2])
+            block_runlength = base64_to_ndarray_vec(row[3])
+            insn_runlength = base64_to_ndarray_vec(row[4])
+            #string_stream = reverse_tokenization(tokens, block_runlength, insn_runlength, vocab)
+            reconst = FunctionTokenList.reconstruct_func_from_raw_bytes(tokens, block_runlength, insn_runlength, token_man)
+            yield (function_name, function_duplicate, reconst)
+
+
 
 
 def datastructures_to_insn(vocab: dict[int, str],

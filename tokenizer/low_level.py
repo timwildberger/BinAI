@@ -6,7 +6,8 @@ from pathlib import Path
 from tokenizer.address_meta_data_lookup import AddressMetaDataLookup
 from tokenizer.compact_base64_utils import ndarray_to_base64
 from tokenizer.compact_base64_utils import base64_to_ndarray_vec
-from tokenizer.csv_files import parse_and_save_data_sections, token_to_insn, compare_csv_files, vocab_from_output
+from tokenizer.csv_files import parse_and_save_data_sections, token_to_insn, compare_csv_files, vocab_from_output, \
+    token_to_functions
 from tokenizer.function_token_list import FunctionTokenList
 from tokenizer.op_imm_mem import tokenize_operand_memory, tokenize_operand_immediate
 from tokenizer.opaque_remapping import apply_opaque_mapping, apply_opaque_mapping_raw_optimized
@@ -21,8 +22,10 @@ from typing import Optional
 from tqdm import tqdm
 import numpy as np
 import numpy.typing as npt
+import argparse
 
 VERIFICATION: bool = False
+SCRIPT_FOLDER: Path = Path(__file__).parent.resolve()
 
 
 degenerate_prefixes = {
@@ -294,7 +297,7 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
 
     # Initialize the resolver for token management
     resolver = TokenResolver()
-    instr_sets = InstructionSets("tokenizer/data_store.json")
+    instr_sets = InstructionSets(SCRIPT_FOLDER / "./data_store.json")
     kwargs.update(dict(resolver=resolver, instr_sets=instr_sets))
 
     function_manager = main_loop(vocab_manager=vocab_manager, **kwargs)
@@ -499,74 +502,81 @@ def run_tokenizer(path: Path) -> None:
 
     print("VERIFY OUTPUT")
     # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_runlength, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
-    vocab: list[str] = vocab_from_output("output.csv")
-    token_man = VocabularyManager.from_vocab(platform="x86", vocab_list=vocab)
-    token_to_insn("output.csv", "reconstructed_disassembly.csv", token_man)
+    # vocab: list[str] = vocab_from_output("output.csv")
+    # token_man = VocabularyManager.from_vocab(platform="x86", vocab_list=vocab)
+    for (name, dublicate_idx, tokensRC) in token_to_functions("output.csv"):
+        original = function_manager.get_function_data(name, dublicate_idx)
+        tokensOG = original.tokens
+
+        assert tokensRC.insn_count == original.tokens.insn_count
+        assert tokensRC.block_count == original.tokens.block_count
+        assert tokensRC.last_index == original.tokens.last_index
+        iterRC = tokensRC.iter_tokens() #here we resolve to check the vocab manager
+        iterOG = tokensOG.iter_raw_tokens() #for og we do not care are resolving does not change equality
+
+        for (x, y) in zip(iterRC, iterOG):
+            if x != y:
+                print(f"Token mismatch: {x} != {y}")
+                raise ValueError("Token mismatch in disassembly list")
+
+        #iterators should both be done, but zip stops at the shortest one
+        assert next(iterRC, None) is None, "Reconstructed function contains more tokens than original"
+        assert next(iterOG, None) is None, "Reconstructed functions missing tokens from original"
+
+    print("Verification complete.")
+
+
+
+
 
 
 
 
 
 def main():
-    if len(sys.argv) != 2:
-        print(f"Usage: python {sys.argv[0]} <queue_file>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Tokenize binaries for BinAI.")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--batch', type=str, metavar='QUEUE_FILE', help='Process a batch of binaries from a queue file')
+    group.add_argument('--single', type=str, metavar='BINARY_FILE', help='Process a single binary file')
+    group.add_argument('--debugs', action='store_true', help='Debug mode: process ../src/clamav/x86-gcc-5-O3_minigzipsh')
+    group.add_argument('--debugl', action='store_true', help='Debug mode: process ../src/clamav/x86-clang-5.0-O1_sigtool')
+    args = parser.parse_args()
 
-    queue_file = sys.argv[1]
-
-    print(f"[*] Filtering queue: {queue_file}")
-    filter_queue_file_by_existing_output(queue_file)
-
-    print(f"Using queue: {queue_file}")
-    while True:
-        binary_path_str: str | None = pop_first_line(queue_file)
-
-        if binary_path_str is None:
-            print("Queue is empty. Exiting.")
-            break
-        binary_path = Path(binary_path_str).absolute()
-
-        print(f"\n[*] Processing binary: {binary_path}")
+    if args.batch:
+        queue_file = args.batch
+        print(f"[*] Filtering queue: {queue_file}")
+        filter_queue_file_by_existing_output(queue_file)
+        print(f"Using queue: {queue_file}")
+        while True:
+            binary_path_str: str | None = pop_first_line(queue_file)
+            if binary_path_str is None:
+                print("Queue is empty. Exiting.")
+                break
+            binary_path = Path(binary_path_str).resolve()
+            print(f"\n[*] Processing binary: {binary_path}")
+            run_tokenizer(binary_path)
+    elif args.single:
+        binary_path = Path(args.single).resolve()
+        print(f"[*] Processing single binary: {binary_path}")
         run_tokenizer(binary_path)
-
-    
-
-
-    #compare_csv_files("reconstructed_disassembly.csv", "readable_tokenized_disassembly.csv")
-    # compare_csv_files("reconstructed_disassembly_test.csv", "readable_tokenized_disassembly.csv")
-
-    # print(f"Output and reconstruction equal? {filecmp.cmp("reconstructed_disassembly_test.csv", "reconstructed_disassembly.csv", shallow=False)}")
-
-    """func_names = result["func_names.pkl"]
-    token_dict = result["token_dict.pkl"]readable_tokenized_disassembly.csv
-    block_runlength_dict = result["block_runlength_dict.pkl"]
-    insn_runlength_dict = result["insn_runlength_dict.pkl"]
-    opaque_meta_dict = result["opaque_meta_dict.pkl"]
-    vocab = result["vocab.pkl"]
-    duplicate_func_names = result["duplicate_func_names.pkl"]
-    tokenized_instructions = result["tokenized_instructions.pkl"]
-    block_run_lengths = result["block_run_lengths.pkl"]
-    insn_run_lengths = result["insn_run_lengths.pkl"]
-    meta_result = result["meta_result.pkl"]"""
-
-    # token_to_insn("output.csv")
-    # compare_csv_files("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv")
-    # print(filecmp.cmp("readable_tokenized_disassembly.csv", "reconstructed_disassembly.csv", shallow=False))
-
-
-
+    elif args.debugs:
+        binary_path = SCRIPT_FOLDER / "../src/clamav/x86-gcc-5-O3_minigzipsh"
+        print(f"[*] Debug mode (gcc): {binary_path}")
+        run_tokenizer(binary_path)
+    elif args.debugl:
+        binary_path = SCRIPT_FOLDER / "../src/clamav/x86-clang-5.0-O1_sigtool"
+        print(f"[*] Debug mode (clang): {binary_path}")
+        run_tokenizer(binary_path)
 
 if __name__ == "__main__":
     print("loading")
-    import sys
-    import csv
+    import sys, csv
 
     maxInt = sys.maxsize
-
-    while True:
         # decrease the maxInt value by factor 10
         # as long as the OverflowError occurs.
 
+    while True:
         try:
             csv.field_size_limit(maxInt)
             break
@@ -575,7 +585,3 @@ if __name__ == "__main__":
 
     print("running main")
     main()
-
-    # TODO nach csv bauen: Reversecheck ob das auch alles wieder korrekt aufgelöst wird
-    # TODO proper placeholder for unresolvable opaque constants
-    # TODO bei VALUED_CONST_{} immer zwei stellen bitte also 0F statt F

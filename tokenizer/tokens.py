@@ -97,7 +97,9 @@ class TokenType(IntEnum):
     OPAQUE_CONST = 5
     MEMORY_OPERAND = 6
     TOKEN_SET = 7
+    IDENTIFIER_LITERAL = 8
     UNRESOLVED = -1
+
 
 
 class MemoryOperandSymbol(Enum):
@@ -213,6 +215,11 @@ class IdentifierToken(Tokens, ABC):
     @abstractmethod
     def __init__(self, identifier_id: int) -> None:
         ...
+
+    @classproperty
+    def token_type(cls) -> TokenType:
+        """Return the type of this token representation"""
+        return TokenType.IDENTIFIER_LITERAL
 
     @classmethod
     def singleton_token_index(cls, id: int) -> Optional[int]:
@@ -415,3 +422,10 @@ class TokenResolver:
         """Reset the block counter and block IDs for a new function"""
         self.block_counter = 0
         self.block_ids.clear()
+
+
+class LitTokenType(Enum):
+    """Enum to specify if a token is a regular token, Lit_Start, or Lit_End token"""
+    REGULAR = "regular"
+    LIT_START = "lit_start"
+    LIT_END = "lit_end"

@@ -3,7 +3,7 @@ import numpy.typing as npt
 from typing import Iterator, Optional
 
 from tokenizer.token_manager import VocabularyManager
-from tokenizer.tokens import Tokens, TokenType
+from tokenizer.tokens import Tokens, TokenType, TokenRaw
 from tokenizer.token_lists import InsnTokenList, BlockTokenList
 from tokenizer.utils import CA_BArle_to_CBrle, run_length_and_last_type
 
@@ -65,23 +65,33 @@ class FunctionTokenList:
         
         # Token-level arrays (level 0)
         result.token_ids = tokens.astype(np.int16)
-        metatoken_idx_run_length, result.metatoken_type_ids = run_length_and_last_type(
+        metatoken_idx_run_length, metatoken_first_idx = run_length_and_last_type(
             tokens,
             vocab_manager.lit_starts,
             vocab_manager.lit_ends
         )
-
         result.metatoken_start_lookup = metatoken_idx_run_length.cumsum(dtype=np.int32)
+        if vocab_manager is None:
+            result.metatoken_type_ids = np.full_like(metatoken_first_idx, fill_value=TokenType.UNRESOLVED, dtype=np.int16)
+        else:
+            result.metatoken_type_ids = vocab_manager.id_to_token_type[metatoken_first_idx]
+
+
 
         # Instruction-level arrays (level 1)
         result.insn_idx_run_lengths = insn_idx_runlength
         result.insn_metatoken_run_lengths = CA_BArle_to_CBrle(insn_idx_runlength, metatoken_idx_run_length)
-        result.insn_strs = np.fill_like(result.insn_metatoken_run_lengths, fill_value="n/a")
+        result.insn_strs = np.full_like(result.insn_metatoken_run_lengths, fill_value="n/a", dtype=object)
 
         # Block-level arrays (level 2)
         result.block_metatoken_run_lengths = CA_BArle_to_CBrle(block_idx_runlength, metatoken_idx_run_length)
         result.block_insn_run_lengths = CA_BArle_to_CBrle(block_idx_runlength, insn_idx_runlength)
-        result.block_addrs = -0xdeadbeef
+        result.block_addrs = np.full(len(block_idx_runlength), -0xdeadbeef)
+
+        # Set counters
+        result.last_index = len(metatoken_idx_run_length)
+        result.insn_count = len(insn_idx_runlength)
+        result.block_count = len(block_idx_runlength)
 
         return result
 
@@ -295,7 +305,7 @@ class FunctionTokenList:
     def iter_tokens(self) -> Iterator[Tokens]:
         """Return an iterator for all tokens in this function"""
         for insn in self.iter_insns(True):
-            for token in insn:
+            for token in insn.iter_tokens():
                 yield token
 
     def to_asm_original(self) -> str:
@@ -382,7 +392,7 @@ class FunctionTokenList:
             self.block_metatoken_run_lengths = new_block_token_run_lengths
             self.block_addrs = new_block_addrs
 
-    def iter_raw_tokens(self) -> Iterator['TokenRaw']:
+    def iter_raw_tokens(self) -> Iterator[TokenRaw]:
         """Return an iterator for all raw tokens in this function"""
         for block in self.iter_blocks(True):
             for raw_token in block.iter_raw_tokens():

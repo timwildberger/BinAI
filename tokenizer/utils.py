@@ -67,10 +67,10 @@ def CA_BArle_to_CBrle(c_to_a_rle: npt.NDArray[np.int_], b_to_a_rle: npt.NDArray[
     b_to_a_idx= b_to_a_rle.cumsum()
 
     # right side matches cumsum the excluded ending index
-    x = np.searchsorted(c_to_a_idx, b_to_a_idx, side='right')
+    x = np.searchsorted(b_to_a_idx, c_to_a_idx, side='right')
     # these are indecies so we need to convert back to runlengths encoding
-    b_to_a_idx[1:] = x[1:] - x[:-1]
-    return b_to_a_rle
+    x[1:] -= x[:-1]
+    return x
 
 
 

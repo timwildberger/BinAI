@@ -427,8 +427,8 @@ class BlockTokenList:
                 raise RuntimeError(f"Invalid token length idx_len={idx_len} token_len={token_len} for instruction {insn_i}")
 
             token_list.token_ids = self.token_ids[idx_last:idx_last + idx_len]
-            if token_list.token_ids.size == 0:
-                raise RuntimeError(f"Token IDs for instruction {insn_i} are empty")
+            if token_list.token_ids.size < idx_len:
+                raise RuntimeError(f"Token IDs for instruction {insn_i} got truncated: expected {idx_len}, got {token_list.token_ids.size}")
 
             token_list.metatoken_start_lookup = self.metatoken_start_lookup[token_last:token_last + token_len] - (self.metatoken_start_lookup[token_last - 1] if token_last > 0 else 0)
             token_list.metatoken_type_ids = self.metatoken_type_ids[token_last:token_last + token_len]

@@ -1,6 +1,7 @@
 """
 Instruction sets classification for assembly instruction categorization.
 """
+from pathlib import Path
 
 
 class InstructionSets:
@@ -9,7 +10,7 @@ class InstructionSets:
     Provides easy access to instruction sets loaded from data store.
     """
 
-    def __init__(self, data_store_path: str = "tokenizer/data_store.json"):
+    def __init__(self, data_store_path: Path):
         """
         Initialize instruction sets from data store.
 
