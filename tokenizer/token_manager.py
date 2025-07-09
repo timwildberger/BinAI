@@ -111,18 +111,17 @@ class VocabularyManager:
 
         if index < 0 or index >= insn_token_list.last_index:
             raise IndexError(f"Token index {index} out of bounds (0 to {insn_token_list.last_index - 1})")
-
-        if insn_token_list.token_start_lookup is None:
+        if insn_token_list.metatoken_start_lookup is None:
             raise ValueError("Cannot get token from invalidated view")
 
         token_type = TokenType(insn_token_list.token_type_ids[index])
 
         # Get token IDs for this specific token
-        start_pos = insn_token_list.token_start_lookup[index-1] if index > 0 else 0
+        start_pos = insn_token_list.metatoken_start_lookup[index-1] if index > 0 else 0
         if index == insn_token_list.last_index - 1:
             end_pos = len(insn_token_list.get_used_token_ids())
         else:
-            end_pos = insn_token_list.token_start_lookup[index]
+            end_pos = insn_token_list.metatoken_start_lookup[index]
 
         token_ids = insn_token_list.token_ids[start_pos:end_pos].tolist()
         return self._reconstruct_token_from_ids(token_type, token_ids)

@@ -58,18 +58,22 @@ class FunctionTokenList:
             num_blocks=-1,
             vocab_manager=vocab_manager, init=False
         )
+        """
         if vocab_manager is None:
             token_types = np.full_like(tokens, fill_value=TokenType.UNRESOLVED, dtype=np.int16)
         else:
-            token_types = vocab_manager.id_to_token_type[tokens]
-        
+            token_types = vocab_manager.id_to_token_type[np.array(tokens)]
+
+        """
         # Token-level arrays (level 0)
         result.token_ids = tokens.astype(np.int16)
+        
         metatoken_idx_run_length, result.metatoken_type_ids = FunctionTokenList.run_length_and_last_type(
             tokens,
             vocab_manager.lit_starts,
             vocab_manager.lit_ends
         )
+        
         result.metatoken_start_lookup = metatoken_idx_run_length.cumsum(dtype=np.int32)
 
         # Instruction-level arrays (level 1)
@@ -80,7 +84,7 @@ class FunctionTokenList:
         # Block-level arrays (level 2)
         result.block_metatoken_run_lengths = CA_BArle_to_CBrle(block_idx_runlength, metatoken_idx_run_length)
         result.block_insn_run_lengths = CA_BArle_to_CBrle(block_idx_runlength, insn_idx_runlength)
-        result.block_addrs = -0xdeedbeef
+        result.block_addrs = -0xdeadbeef
 
         return result
 
