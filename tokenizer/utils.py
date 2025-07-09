@@ -1,5 +1,7 @@
 import numpy as np
 import numpy.typing as npt
+from pathlib import Path
+import os
 
 def register_name_range(id: int, basename: str) -> str:
     """
@@ -69,3 +71,51 @@ def CA_BArle_to_CBrle(c_to_a_rle: npt.NDArray[np.int_], b_to_a_rle: npt.NDArray[
     # these are indecies so we need to convert back to runlengths encoding
     b_to_a_idx[1:] = x[1:] - x[:-1]
     return b_to_a_rle
+
+
+
+def filter_queue_file_by_existing_output(queue_file: str, out_dir: str = "out") -> None:
+    """
+    Removes lines from the queue file if a corresponding output CSV already exists in the out/ directory.
+    """
+    filtered_lines = []
+
+    with open(queue_file, "r") as f:
+        lines = [line.strip() for line in f if line.strip()]
+
+    print(len(lines))
+
+    for binary_path in lines:
+        binary_name = os.path.basename(binary_path)
+        try:
+            relative_path = Path(binary_path).relative_to("src")
+        except ValueError:
+            print(f"[!] Skipping non-src path: {binary_path}")
+            continue
+
+        output_csv = Path(out_dir) / relative_path.parent / f"{binary_name}_functions.csv"
+
+        if not output_csv.exists():
+            filtered_lines.append(binary_path)
+        else:
+            print(f"[~] Skipping {binary_path} (output exists at {output_csv})")
+
+    with open(queue_file, "w") as f:
+        for line in filtered_lines:
+            f.write(f"{line}\n")
+
+    print(f"[+] Filtered queue file {queue_file}: {len(filtered_lines)} items remaining.")
+
+def pop_first_line(queue_file: str) -> str | None:
+    with open(queue_file, "r") as f:
+        lines = f.readlines()
+
+    if not lines:
+        return None
+
+    first_line = lines[0].strip()
+
+    with open(queue_file, "w") as f:
+        f.writelines(lines[1:])
+
+    return first_line

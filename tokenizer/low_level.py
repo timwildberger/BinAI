@@ -16,6 +16,7 @@ from tokenizer.token_manager import VocabularyManager
 from tokenizer.constant_handler import ConstantHandler
 from tokenizer.function_data_manager import FunctionDataManager, FunctionData
 from tokenizer.instruction_sets import InstructionSets
+from tokenizer.utils import filter_queue_file_by_existing_output, pop_first_line
 from typing import Optional
 from tqdm import tqdm
 import numpy as np
@@ -23,29 +24,6 @@ import numpy.typing as npt
 
 VERIFICATION: bool = False
 
-"""
-Blöcke 0 bis 16:
-Block0, Block1, ..., BlockF
-
-Ab 16:
-BlockLitStart
-BlockLit1
-BlockLit0
-BlockLitEnd
-
-e.g. Block 257
-BlockLitStart
-BlockLit1
-BlockLit0
-BlockLit1
-BlockLitEnd
-
-Konstanten:
-1. ValueConstants (00 to FF representing a constant of exactly that value)
-2. ValueConstantLiterals (for up to 128 Bit values)
-3. OpaqueConstants (16 uniqe - they represent an opaque value basically: e.g. the representation of the string "HelloWorld")
-4. OpaqueConstantLiterals (if a function needs more than 16 Opaque Literals)
-"""
 
 degenerate_prefixes = {
     0xF2: ["repne", "repnz"],
@@ -169,6 +147,8 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
 
     # Register prefix tokens
     # looking at capstone source: https://github.com/qemu/capstone/blob/9e27c51c2485dd37dd3917919ae781c6153f3688/include/capstone/x86.h#L247C1-L262C14
+    if getattr(insn, "prefix", None) is None:
+        print(f"PENIS")
     for byte in insn.prefix:
         if byte in degenerate_prefixes:
             skip = True
@@ -241,31 +221,15 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
     return insn_tokens, insn_tokens2
 
 
-def disassemble_to_tokens(path, cfg, constant_list, with_pickled=False, project=None, **kwargs):
+def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, constant_list: dict[str, list[str]], with_pickled=False, project=None, **kwargs):
     """
-    Operand types: (in theory)
-    0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
-    1: Immediate        add eax, 5            ; reg (eax), imm (5)           => one register, one immediate (type 1)
-    2: Memory           mov eax, [ebx + 4]    ; reg (eax), mem ([ebx+4])    => register and memory operand (type 2)
-    3: FloatingPoint    fld qword ptr [esp]   ; floating point load from mem => mem (type 2) with floating point semantics (type 3)
+    Wrapper function for the entire disassembly and tokenization.
 
-    Operand types (inferred from code due to terrible documentation from angr)
-    1: Register
-    2: Immediate
-    3: Memory
-
-    Classifies:
-    - ValueConstants: 0x00 to 0xFF
-    - ValueConstantLiterals: larger static values (up to 128-bit)
-    - OpaqueConstants: memory references using base registers or unresolved values
-    - OpaqueConstantLiterals: overflow beyond the first 16 unique opaque constants
-
-
-    Opaque Const Metadaten:
-    0: {type: Local function, name: fibonacci}
-    1: {type: String, value: "Hello World I love u"}
-    2: {type: Library function, name: read_file, library: libc}
-    3: {type: Library function, name: close_file, library: libc}
+    Args:
+        path (Path): Relative path to the binary.
+        cfg (angr.analyses.cfg.cfg_fast.CFGFast): CFGFast, Control Flow Graph of binary.
+        constant_list (dict[str, list[str]]): List of all known constants.
+        with_pickled (bool): If True, loads pickles of previously parsed binary. Builds everything anew if False.
     """
     if not with_pickled:
         func_names = []
@@ -334,15 +298,6 @@ def disassemble_to_tokens(path, cfg, constant_list, with_pickled=False, project=
     kwargs.update(dict(resolver=resolver, instr_sets=instr_sets))
 
     function_manager = main_loop(vocab_manager=vocab_manager, **kwargs)
-
-    with open("disassembly.csv", encoding="utf-8", mode="w", newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        for k, v in func_disas.items():
-            writer.writerow([f"{k}: {v}"])
-    with open("readable_tokenized_disassembly.csv", encoding="utf-8", mode="w", newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        for k, v in func_disas_token.items():
-            writer.writerow([k, v.to_asm_like()])
 
     # save_pickles(func_names,
     #              duplicate_func_names, function_manager, vocab_manager)
@@ -481,15 +436,16 @@ def build_vocab_tokenize_and_index(func_tokens: FunctionTokenList) -> tuple[npt.
     return token_ids, block_idx_run_lengths, insn_idx_run_lengths
 
 
-def main():
-    """
+def run_tokenizer(path: Path) -> None:
     print(f"STARTING DISASSEMBLY")
-    file_path = Path("src/unrar/x86-clang-3.5-O0_unrar").absolute()
+
+    file_path: Path = path.absolute()
     # file_path = Path("../src/clamav/x86-gcc-5-O3_minigzipsh").absolute()
     pickle_file_path = file_path.parent / f"{file_path.name}.pkl"
     pickle_mainloop_file_path = file_path.parent / f"{file_path.name}.mainloop.pkl"
     with_pickled = False
     start_time = time.time()
+
     if pickle_mainloop_file_path.exists():
         print("loading existing mainloop pickle to speed up")
         with open(pickle_mainloop_file_path, "rb") as f:
@@ -505,11 +461,11 @@ def main():
 
         print(f"Pickle loading time: {time.time() - start_time:.2f} seconds")
     else:
-        project = angr.Project(file_path, auto_load_libs=False)  # was False
+        project: angr.Project = angr.Project(file_path, auto_load_libs=False)  # was False
         constants: dict[str, list[str]] = parse_and_save_data_sections(project)
-        cfg = project.analyses.CFGFast(normalize=True)
+        cfg: angr.analyses.cfg.cfg_fast.CFGFast = project.analyses.CFGFast(normalize=True)
 
-        kvargs = dict(project=project, path=file_path, cfg=cfg, constant_list=constants)
+        kvargs: dict = dict(project=project, path=file_path, cfg=cfg, constant_list=constants)
         print(f"Preparation stage 1 time: {time.time() - start_time:.2f} seconds")
         start_time = time.time()
         with open(pickle_file_path, "wb") as f:
@@ -542,7 +498,6 @@ def main():
             writer.writerow(row)
 
     print("VERIFY OUTPUT")
-    """
     # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_runlength, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
     vocab: list[str] = vocab_from_output("output.csv")
     token_man = VocabularyManager.from_vocab(platform="x86", vocab_list=vocab)
@@ -550,6 +505,31 @@ def main():
 
 
 
+
+
+def main():
+    if len(sys.argv) != 2:
+        print(f"Usage: python {sys.argv[0]} <queue_file>")
+        sys.exit(1)
+
+    queue_file = sys.argv[1]
+
+    print(f"[*] Filtering queue: {queue_file}")
+    filter_queue_file_by_existing_output(queue_file)
+
+    print(f"Using queue: {queue_file}")
+    while True:
+        binary_path_str: str | None = pop_first_line(queue_file)
+
+        if binary_path_str is None:
+            print("Queue is empty. Exiting.")
+            break
+        binary_path = Path(binary_path_str).absolute()
+
+        print(f"\n[*] Processing binary: {binary_path}")
+        run_tokenizer(binary_path)
+
+    
 
 
     #compare_csv_files("reconstructed_disassembly.csv", "readable_tokenized_disassembly.csv")

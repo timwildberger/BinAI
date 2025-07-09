@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import argparse
 
 class BinaryFilter:
     def __init__(self, root_dir="src"):
@@ -92,9 +93,9 @@ def sort_files_by_size(paths):
     return [path for path, _ in sorted_files]
 
 
-def split_paths_interleaved(paths, output_dir, prefix="queue"):
+def split_paths_interleaved(paths, output_dir, num_lists: int, prefix="queue"):
     """
-    Splits a list of file paths into 4 interleaved lists and writes each to a text file.
+    Splits a list of file paths into num_lists interleaved lists and writes each to a text file.
 
     Args:
         paths (list of str): The list of file paths.
@@ -108,30 +109,30 @@ def split_paths_interleaved(paths, output_dir, prefix="queue"):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create 4 interleaved buckets
-    buckets = [[] for _ in range(4)]
+    buckets: list[list[Path]] = [[] for _ in range(num_lists)]
     for i, path in enumerate(paths):
-        buckets[i % 4].append(path)
+        buckets[i % num_lists].append(path)
 
     # Write each bucket to its own text file
     for i, bucket in enumerate(buckets):
         file_path = output_dir / f"{prefix}_{i}.txt"
         with open(file_path, "w") as f:
             for line in bucket:
-                f.write(line + "\n")
+                f.write(f"{line}\n")
 
-# Optional for standalone testing
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--splits", type=int, default=4, help="Number of output queue files to generate.")
+    parser.add_argument("--output-dir", type=str, default="./queue", help="Directory to store queue files.")
+    args = parser.parse_args()
+
     bf = BinaryFilter("./src")
     matches = bf.filter(arch=["x86", "x64", "arm32", "arm64"], compiler=["gcc", "clang"], version="9", opt=["O0", "O3"])
-    paths = []
-    for match in matches:
-        print(match["path"])
-        paths.append(match["path"])
-    print(len(matches))
-    
-    queue = sort_files_by_size(paths)
-    split_paths_interleaved(queue, "./queue/")
+    paths = [match["path"] for match in matches]
+    print(f"Found {len(paths)} matching binaries.")
 
+    queue = sort_files_by_size(paths)
+    split_paths_interleaved(queue, args.output_dir, args.splits)
 
 if __name__ == "__main__":
     main()

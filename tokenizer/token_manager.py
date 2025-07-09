@@ -210,7 +210,6 @@ class VocabularyManager:
 
         if index < 0 or index >= insn_token_list.last_index:
             raise IndexError(f"Token index {index} out of bounds (0 to {insn_token_list.last_index - 1})")
-
         if insn_token_list.metatoken_start_lookup is None:
             raise ValueError("Cannot get token from invalidated view")
 

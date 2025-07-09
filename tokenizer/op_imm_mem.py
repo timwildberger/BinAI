@@ -45,8 +45,6 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
 
     disp = op.mem.disp
 
-
-
     scale = op.mem.scale
     base = op.mem.base
     index = op.mem.index
@@ -97,11 +95,29 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
 
     # Process displacement
     if not has_disp:
-        1 # noop ignore
+        pass # noop ignore
     elif disp <= 0xFF: # if we are in range 00 to 0xFF we always use constant, same if we are negative as its defo not an addr
         tokens.append(vocab_manager.Valued_Const(abs(disp)))
 
     else:
+        force_opaque = False
+
+        if has_disp and not has_reg:
+            force_opaque = True
+
+        elif disp > (1 << 18):  # = 262,144
+            force_opaque = True
+
+        meta, kind = lookup.lookup(disp)
+
+        if force_opaque:
+            disp_token = constant_handler.process_constant(
+                hex(disp),
+                is_arithmetic=False,
+                meta=meta,
+                library_type=meta.get("library", "unknown") if meta else "unknown"
+            )
+            tokens.append(disp_token)
         # For larger displacements, check if pointing to known constant or code or opaque
         meta, kind = lookup.lookup(disp)
         if meta is not None:
