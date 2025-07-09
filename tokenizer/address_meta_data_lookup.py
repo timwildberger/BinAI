@@ -10,7 +10,7 @@ class AddressMetaDataLookup:
             if section.name in (".text", ".plt", ".init", ".fini", ".plt.sec"):
                 self._code_regions.append((section.vaddr, section.vaddr + section.memsize))
         self.cfg = self.project.analyses.CFGFast(normalize=True, regions=self._code_regions)
-
+        # TODO regions might skip if one is not present.
         self.exact_lookup = {}
         self.range_lookup = IntervalTree()
         self.library_ranges = self._build_library_ranges()
