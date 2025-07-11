@@ -105,8 +105,8 @@ class VocabularyManager:
             new_capacity = old_capacity * 2
 
             # Resize id_to_token_type array
-            new_token_type_array = np.empty(old_capacity, dtype=np.int8)
-            new_token_type_array[:new_capacity] = self._id_to_token_type[:old_capacity]
+            new_token_type_array = np.empty(new_capacity, dtype=np.int8)
+            new_token_type_array[:old_capacity] = self._id_to_token_type[:old_capacity]
             self._id_to_token_type = new_token_type_array
 
         # Set token type
