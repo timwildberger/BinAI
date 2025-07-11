@@ -96,7 +96,7 @@ class FunctionDataManager:
         if function_data.tokens.block_count > 1:
             return False
 
-        if function_data.tokens.last_index != len(self.jump_only_fn)
+        if function_data.tokens.last_index != len(self.jump_only_fn):
             return False
 
         for t1, t2 in zip(function_data.tokens.iter_raw_tokens(), self.jump_only_fn):
