@@ -297,7 +297,7 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
     instr_sets = InstructionSets(SCRIPT_FOLDER / "./data_store.json")
     kwargs.update(dict(resolver=resolver, instr_sets=instr_sets))
 
-    function_manager = main_loop(vocab_manager=vocab_manager, **kwargs)
+    function_manager = main_loop(vocab_manager=vocab_manager, path=path, **kwargs)
 
     # save_pickles(func_names,
     #              duplicate_func_names, function_manager, vocab_manager)
@@ -307,13 +307,19 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
 
 def main_loop(instr_sets, cfg, constant_list,
               func_addr_range, func_disas, func_disas_token, func_name_addr, func_names, inv_prefix_tokens, lookup,
-              resolver, text_end, text_start, vocab_manager, **_kwargs) -> FunctionDataManager:
+              resolver, text_end, text_start, vocab_manager, path, **_kwargs) -> FunctionDataManager:
 
     # Initialize FunctionDataManager with pre-allocated arrays
     total_functions = len(cfg.functions.items())
     function_manager = FunctionDataManager(total_functions, vocab_manager)
+    with open(f"{path.absolute().name}_output.csv", "w", newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        # Write header with occurrence column added
+        writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata', f'"{",".join(vocab_manager.id_to_token)}"'])
 
-    for func_addr, func in tqdm(iterable=cfg.functions.items(),
+    prev_func_name = ""
+    occurence = 0
+    for func_addr, func in tqdm(iterable=sorted(cfg.functions.items(), key=lambda item: item[1].name),
                                 desc="Retrieving data from alllll functions. Like a big boy."):
         func_name = cfg.functions[func_addr].name
         if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
@@ -380,30 +386,47 @@ def main_loop(instr_sets, cfg, constant_list,
             tokens_base64 = ndarray_to_base64(tokenized_instructions)
             block_base64 = ndarray_to_base64(block_run_lengths)
             insn_base64 = ndarray_to_base64(insn_run_lengths)
+            
+            with open(f"{path.absolute().name}_output.csv", "a", newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                if func_name == prev_func_name:
+                    occurence += 1
+                else:
+                    occurence = 0
+                row = [
+                    func_name,  # Keep original function name unchanged
+                    str(occurence),  # Add occurrence as separate column
+                    tokens_base64,
+                    block_base64,
+                    insn_base64,
+                    str(repr(meta_result))
+                ]
+                writer.writerow(row)
+            prev_func_name = func_name
+
             assert np.all(base64_to_ndarray_vec(tokens_base64) == tokenized_instructions), "Base64 conversion failed for tokens"
             assert np.all(base64_to_ndarray_vec(block_base64) == block_run_lengths), "Base64 conversion failed for block run lengths"
             assert np.all(base64_to_ndarray_vec(insn_base64) == insn_run_lengths), "Base64 conversion failed for instruction run lengths"
 
+            if VERIFICATION:
+                # Create FunctionData instance
+                function_data = FunctionData(
+                    tokens=func_tokens,
+                    tokens_base64=tokens_base64,
+                    block_runlength_base64=block_base64,
+                    instruction_runlength_base64=insn_base64,
+                    opaque_metadata=repr(meta_result)
+                )
+                # Add all function data in one operation and get the final function name
+                final_func_name = function_manager.add_function_data(
+                    func_name, func_addr, temp_bbs, func_tokens, function_data
+                )
 
-            # Create FunctionData instance
-            function_data = FunctionData(
-                tokens=func_tokens,
-                tokens_base64=tokens_base64,
-                block_runlength_base64=block_base64,
-                instruction_runlength_base64=insn_base64,
-                opaque_metadata=repr(meta_result)
-            )
-
-            # Add all function data in one operation and get the final function name
-            final_func_name = function_manager.add_function_data(
-                func_name, func_addr, temp_bbs, func_tokens, function_data
-            )
-
-            # Update legacy data structures for backward compatibility
-            func_name_addr[final_func_name] = func_addr
-            func_disas[final_func_name] = temp_bbs
-            func_disas_token[final_func_name] = func_tokens
-            func_names.append(final_func_name)
+                # Update legacy data structures for backward compatibility
+                func_name_addr[final_func_name] = func_addr
+                func_disas[final_func_name] = temp_bbs
+                func_disas_token[final_func_name] = func_tokens
+                func_names.append(final_func_name)
 
 
         except Exception as e:
@@ -480,6 +503,7 @@ def run_tokenizer(path: Path) -> None:
     print(f"Disassembly time: {disassembly_time:.2f} seconds")
 
     print(f"WRITING OUTPUT")
+    """
     with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         # Write header with occurrence column added
@@ -487,18 +511,19 @@ def run_tokenizer(path: Path) -> None:
 
         # Use the sorted iterator from function_manager
         prev_name = ""
+        prev_row = ""
         for func_name, occurrence, function_data in function_manager.iter_function_data():
-            if not (func_name == prev_name and str(function_data.tokens_base64) == "ACQ=" and str(function_data.block_runlength_base64) == "ABg=" and str(function_data.instruction_runlength_base64) == "ABg="):
-                row = [
-                    func_name,  # Keep original function name unchanged
-                    occurrence,  # Add occurrence as separate column
-                    function_data.tokens_base64,
-                    function_data.block_runlength_base64,
-                    function_data.instruction_runlength_base64,
-                    str(function_data.opaque_metadata)
-                ]
-                writer.writerow(row)
+            row = [
+                func_name,  # Keep original function name unchanged
+                occurrence,  # Add occurrence as separate column
+                function_data.tokens_base64,
+                function_data.block_runlength_base64,
+                function_data.instruction_runlength_base64,
+                str(function_data.opaque_metadata)
+            ]
+            writer.writerow(row)
             prev_name = func_name
+            prev_row = str(row)"""
 
     print("VERIFY OUTPUT")
     # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_runlength, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
