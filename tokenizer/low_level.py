@@ -311,7 +311,7 @@ def main_loop(instr_sets, cfg, constant_list,
 
     # Initialize FunctionDataManager with pre-allocated arrays
     total_functions = len(cfg.functions.items())
-    function_manager = FunctionDataManager(total_functions)
+    function_manager = FunctionDataManager(total_functions, vocab_manager)
 
     for func_addr, func in tqdm(iterable=cfg.functions.items(),
                                 desc="Retrieving data from alllll functions. Like a big boy."):

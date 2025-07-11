@@ -7,7 +7,8 @@ from typing import Any, Iterator, Tuple, Optional, Dict, List
 from dataclasses import dataclass
 
 from .function_token_list import FunctionTokenList
-from .tokens import Tokens
+from .token_manager import VocabularyManager
+from .tokens import Tokens, TokenType, MemoryOperandSymbol
 
 
 @dataclass
@@ -26,7 +27,7 @@ class FunctionDataManager:
     Provides O(1) access and better memory locality compared to dictionaries.
     """
     
-    def __init__(self, total_functions: int):
+    def __init__(self, total_functions: int, vm: VocabularyManager):
         """
         Initialize the manager with pre-allocated arrays.
         
@@ -47,6 +48,8 @@ class FunctionDataManager:
         self.func_disas_array = np.empty(total_functions, dtype=object)
         self.func_disas_token_array = np.empty(total_functions, dtype=object)
         self.function_data_array = np.empty(total_functions, dtype=object)
+        self.is_jump_only = np.empty(total_functions, dtype=bool)
+        self.jump_only_fn = [vm.Block_Def, vm.Block(0), vm.PlatformToken("jmp"), vm.MemoryOperand(MemoryOperandSymbol.OPEN_BRACKET), vm.Opaque_Const(0), vm.MemoryOperand(MemoryOperandSymbol.CLOSE_BRACKET)]
 
     def add_function_data(self, func_name: str, func_addr: int, func_disas: Any, 
                          func_disas_token: Any, function_data: FunctionData) -> str:
@@ -84,9 +87,24 @@ class FunctionDataManager:
         self.func_disas_array[self.current_index] = func_disas
         self.func_disas_token_array[self.current_index] = func_disas_token
         self.function_data_array[self.current_index] = function_data
+        self.is_jump_only[self.current_index] = self.check_function_just_jump(function_data)
         
         self.current_index += 1
         return final_func_name
+
+    def check_function_just_jump(self, function_data: FunctionData):
+        if function_data.tokens.block_count > 1:
+            return False
+
+        if function_data.tokens.last_index != len(self.jump_only_fn)
+            return False
+
+        for t1, t2 in zip(function_data.tokens.iter_raw_tokens(), self.jump_only_fn):
+            if t1 != t2:
+                return False
+
+        return True
+
     
     def get_function_addr(self, func_name: str, occurrence: int = 0) -> Optional[int]:
         """Get function address by name and occurrence index."""
@@ -196,16 +214,19 @@ class FunctionDataManager:
         new_func_disas = np.empty(self.current_index, dtype=object)
         new_func_disas_token = np.empty(self.current_index, dtype=object)
         new_function_data = np.empty(self.current_index, dtype=object)
+        new_is_jump_only = np.empty(self.current_index, dtype=bool)
 
         # Copy data to new arrays (data is already contiguous from 0 to current_index)
         new_func_name_addr[:] = self.func_name_addr_array[:self.current_index]
         new_func_disas[:] = self.func_disas_array[:self.current_index]
         new_func_disas_token[:] = self.func_disas_token_array[:self.current_index]
         new_function_data[:] = self.function_data_array[:self.current_index]
+        new_is_jump_only[:] = self.is_jump_only[:self.current_index]
 
         # Replace old arrays
         self.func_name_addr_array = new_func_name_addr
         self.func_disas_array = new_func_disas
         self.func_disas_token_array = new_func_disas_token
         self.function_data_array = new_function_data
+        self.is_jump_only = new_is_jump_only
         self.total_functions = self.current_index
