@@ -404,11 +404,11 @@ def main_loop(instr_sets, cfg, constant_list,
                 writer.writerow(row)
             prev_func_name = func_name
 
-            assert np.all(base64_to_ndarray_vec(tokens_base64) == tokenized_instructions), "Base64 conversion failed for tokens"
-            assert np.all(base64_to_ndarray_vec(block_base64) == block_run_lengths), "Base64 conversion failed for block run lengths"
-            assert np.all(base64_to_ndarray_vec(insn_base64) == insn_run_lengths), "Base64 conversion failed for instruction run lengths"
 
             if VERIFICATION:
+                assert np.all(base64_to_ndarray_vec(tokens_base64) == tokenized_instructions), "Base64 conversion failed for tokens"
+                assert np.all(base64_to_ndarray_vec(block_base64) == block_run_lengths), "Base64 conversion failed for block run lengths"
+                assert np.all(base64_to_ndarray_vec(insn_base64) == insn_run_lengths), "Base64 conversion failed for instruction run lengths"
                 # Create FunctionData instance
                 function_data = FunctionData(
                     tokens=func_tokens,
@@ -525,30 +525,31 @@ def run_tokenizer(path: Path) -> None:
             prev_name = func_name
             prev_row = str(row)"""
 
-    print("VERIFY OUTPUT")
-    # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_runlength, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
-    # vocab: list[str] = vocab_from_output("output.csv")
-    # token_man = VocabularyManager.from_vocab(platform="x86", vocab_list=vocab)
-    for (name, dublicate_idx, tokensRC) in token_to_functions("output.csv"):
-        original = function_manager.get_function_data(name, dublicate_idx)
-        tokensOG = original.tokens
+    if VERIFICATION:
+        print("VERIFY OUTPUT")
+        # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_runlength, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
+        # vocab: list[str] = vocab_from_output("output.csv")
+        # token_man = VocabularyManager.from_vocab(platform="x86", vocab_list=vocab)
+        for (name, dublicate_idx, tokensRC) in token_to_functions("output.csv"):
+            original = function_manager.get_function_data(name, dublicate_idx)
+            tokensOG = original.tokens
 
-        assert tokensRC.insn_count == original.tokens.insn_count
-        assert tokensRC.block_count == original.tokens.block_count
-        assert tokensRC.last_index == original.tokens.last_index
-        iterRC = tokensRC.iter_tokens() #here we resolve to check the vocab manager
-        iterOG = tokensOG.iter_raw_tokens() #for og we do not care are resolving does not change equality
+            assert tokensRC.insn_count == original.tokens.insn_count
+            assert tokensRC.block_count == original.tokens.block_count
+            assert tokensRC.last_index == original.tokens.last_index
+            iterRC = tokensRC.iter_tokens() #here we resolve to check the vocab manager
+            iterOG = tokensOG.iter_raw_tokens() #for og we do not care are resolving does not change equality
 
-        for (x, y) in zip(iterRC, iterOG):
-            if x != y:
-                print(f"Token mismatch: {x} != {y}")
-                raise ValueError("Token mismatch in disassembly list")
+            for (x, y) in zip(iterRC, iterOG):
+                if x != y:
+                    print(f"Token mismatch: {x} != {y}")
+                    raise ValueError("Token mismatch in disassembly list")
 
-        #iterators should both be done, but zip stops at the shortest one
-        assert next(iterRC, None) is None, "Reconstructed function contains more tokens than original"
-        assert next(iterOG, None) is None, "Reconstructed functions missing tokens from original"
+            #iterators should both be done, but zip stops at the shortest one
+            assert next(iterRC, None) is None, "Reconstructed function contains more tokens than original"
+            assert next(iterOG, None) is None, "Reconstructed functions missing tokens from original"
 
-    print("Verification complete.")
+        print("Verification complete.")
 
 
 def main():
