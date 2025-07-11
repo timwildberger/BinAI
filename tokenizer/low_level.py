@@ -120,7 +120,6 @@ def fill_constant_candidates(
             (insn_tokens, insn_tokens2) = parse_instruction(instr_sets, constant_handler,
                               func_max_addr, func_min_addr, insn, lookup, text_end, text_start,
                               vocab_manager, insn_tokens)
-
             disassembly_list.add_insn(insn_tokens)
             if VERIFICATION:
                 disassembly_list2.append(insn_tokens2)
@@ -150,8 +149,6 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
 
     # Register prefix tokens
     # looking at capstone source: https://github.com/qemu/capstone/blob/9e27c51c2485dd37dd3917919ae781c6153f3688/include/capstone/x86.h#L247C1-L262C14
-    if getattr(insn, "prefix", None) is None:
-        print(f"PENIS")
     for byte in insn.prefix:
         if byte in degenerate_prefixes:
             skip = True
@@ -477,7 +474,7 @@ def run_tokenizer(path: Path) -> None:
         print(f"Pickle (prep only) saving time: {time.time() - start_time:.2f} seconds")
 
     start_time = time.time()
-    print(f"calling lowlevel_disas")
+    print(f"Calling lowlevel_disas")
     (func_names, function_manager, vocab_manager) = disassemble_to_tokens(with_pickled=with_pickled, **kvargs)
     disassembly_time = time.time() - start_time
     print(f"Disassembly time: {disassembly_time:.2f} seconds")
@@ -489,16 +486,19 @@ def run_tokenizer(path: Path) -> None:
         writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata', f'"{",".join(vocab_manager.id_to_token)}"'])
 
         # Use the sorted iterator from function_manager
+        prev_name = ""
         for func_name, occurrence, function_data in function_manager.iter_function_data():
-            row = [
-                func_name,  # Keep original function name unchanged
-                occurrence,  # Add occurrence as separate column
-                function_data.tokens_base64,
-                function_data.block_runlength_base64,
-                function_data.instruction_runlength_base64,
-                str(function_data.opaque_metadata)
-            ]
-            writer.writerow(row)
+            if not (func_name == prev_name and str(function_data.tokens_base64) == "ACQ=" and str(function_data.block_runlength_base64) == "ABg=" and str(function_data.instruction_runlength_base64) == "ABg="):
+                row = [
+                    func_name,  # Keep original function name unchanged
+                    occurrence,  # Add occurrence as separate column
+                    function_data.tokens_base64,
+                    function_data.block_runlength_base64,
+                    function_data.instruction_runlength_base64,
+                    str(function_data.opaque_metadata)
+                ]
+                writer.writerow(row)
+            prev_name = func_name
 
     print("VERIFY OUTPUT")
     # datastructures_to_insn(vocab=vocab, block_run_length_dict=block_runlength, insn_runlength_dict=insn_runlength, token_dict=tokens, duplicate_map=duplicate_map)
@@ -524,13 +524,6 @@ def run_tokenizer(path: Path) -> None:
         assert next(iterOG, None) is None, "Reconstructed functions missing tokens from original"
 
     print("Verification complete.")
-
-
-
-
-
-
-
 
 
 def main():
