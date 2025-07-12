@@ -47,7 +47,6 @@ class ConstantHandler:
             value = int(clean_hex, 16)
         except ValueError:
             raise ValueError(f"Invalid hex value: {hex_value}")"""
-        match_indices = np.where(self.block_ranges[:, 0] == value)[0]
         # Check if it's a small constant (0x00 to 0xFF)
         if is_arithmetic or 0x00 <= value <= 0xFF or value in self.constant_dict:
             return self.vocab_manager.Valued_Const(value)
