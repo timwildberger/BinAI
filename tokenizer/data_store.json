@@ -154,8 +154,16 @@
     "cli",
     "sti",
     "hlt",
-    "nop",
     "cpuid",
+    "rdtsc",
+    "wrmsr",
+    "rdmsr"
+  ],
+  "nop_instructions": [
+    "nop",
+    "pause"
+  ],
+  "kernel_interaction_instructions": [
     "in",
     "out",
     "insb",
@@ -163,11 +171,9 @@
     "insd",
     "outsb",
     "outsw",
-    "outsd",
-    "rdtsc",
-    "wrmsr",
-    "rdmsr",
-    "pause",
+    "outsd"
+  ],
+  "locking_atomic_instructions": [
     "lfence",
     "sfence",
     "mfence"

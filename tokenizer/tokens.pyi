@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
+from tokenizer.architecture import PlatformInstructionTypes
+
 T = TypeVar('T', bound='Tokens')
 
 class TokenType(IntEnum):
@@ -45,6 +47,9 @@ class Tokens(ABC):
 
     @abstractmethod
     def to_asm_like(self) -> str: ...
+
+    @property
+    def platform_instruction_type(self) -> PlatformInstructionTypes: ...
 
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...

@@ -1,5 +1,6 @@
 import warnings
 
+from tokenizer.architecture import PlatformInstructionTypes
 from tokenizer.constant_handler import ConstantHandler
 from typing import List
 
@@ -53,16 +54,16 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
     has_disp = op.mem.disp != 0
 
     if op.size in size_map:
-        tokens.append(vocab_manager.PlatformToken(size_map[op.size]))
+        tokens.append(vocab_manager.PlatformToken(size_map[op.size], PlatformInstructionTypes.POINTER_LENGTHS))
     else:
         # Find the next bigger size in size_map or take the largest available
         next_size = min((s for s in size_map if s > op.size), default=max(size_map))
-        tokens.append(vocab_manager.PlatformToken(size_map[next_size]))
+        tokens.append(vocab_manager.PlatformToken(size_map[next_size], PlatformInstructionTypes.POINTER_LENGTHS))
         warnings.warn(f"unexpected memory operand size: {op.size}, using next bigger '{size_map[next_size]}' at {next_size}bytes for instruction {insn}")
 
 
     if op.mem.segment > 0:
-        tokens.append(vocab_manager.PlatformToken(f"{insn.reg_name(op.mem.segment)}:"))
+        tokens.append(vocab_manager.PlatformToken(f"{insn.reg_name(op.mem.segment)}:", PlatformInstructionTypes.MEMORY_ACCESS_MODE))
 
     tokens.append(vocab_manager.MemoryOperand(MemoryOperandSymbol.OPEN_BRACKET))
 

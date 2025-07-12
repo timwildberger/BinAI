@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import numpy as np
 import numpy.typing as npt
 
+from tokenizer.architecture import PlatformInstructionTypes
+
 T = TypeVar('T', bound='Tokens')
 
 def EnumTokenCls(enum_class: Type[Enum]) -> Any:
@@ -87,6 +89,8 @@ class classproperty(property):
     def __get__(self, owner_self, owner_cls):
         return self.fget(owner_cls)
 
+
+
 class TokenType(IntEnum):
     """Enum for token types to identify token classes"""
     ERROR = 0
@@ -152,6 +156,11 @@ class Tokens(ABC):
         """Convert token to its string representation that resembles assembly syntax"""
         ...
 
+    @property
+    def platform_instruction_type(self) -> PlatformInstructionTypes:
+        """Return the platform instruction type for this token"""
+        return PlatformInstructionTypes.AGNOSTIC
+
     def __str__(self) -> str:
         return self.to_string()
 
@@ -183,8 +192,11 @@ class PlatformToken(Tokens, ABC):
         return TokenType.PLATFORM
 
     @abstractmethod
-    def __init__(self, token: str) -> None:
-        ...
+    def __init__(self, token: str) -> None: ...
+
+    @property
+    @abstractmethod
+    def platform_instruction_type(self) -> PlatformInstructionTypes: ...
 
 
 class ValuedConstToken(Tokens, ABC):

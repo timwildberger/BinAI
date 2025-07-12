@@ -4,6 +4,7 @@ from typing import List
 import numpy as np
 import numpy.typing as npt
 
+from tokenizer.architecture import PlatformInstructionTypes
 from tokenizer.token_utils import TokenUtils
 from tokenizer.tokens import Tokens, TokenType, PlatformToken, ValuedConstToken, IdentifierToken, BlockDefToken, \
     BlockToken, OpaqueConstToken, MemoryOperandToken, MemoryOperandSymbol, LitTokenType
@@ -27,6 +28,9 @@ class VocabularyManager:
         self._lit_end_cache: npt.NDArray[np.int_] = np.empty(4, dtype=np.int_)
         self._lit_start_count = 0  # Track actual entries in lit_start_cache
         self._lit_end_count = 0    # Track actual entries in lit_end_cache
+
+        # New cache for platform instruction types
+        self._platform_instruction_type_cache: npt.NDArray[np.int8] = np.full(256, PlatformInstructionTypes.AGNOSTIC, dtype=np.int8)
 
         # Create unique inner classes for this instance
         self._create_inner_classes()
@@ -81,8 +85,8 @@ class VocabularyManager:
 
 
 
-    def _private_add_token(self, token: str, token_cls: type[Tokens], lit_type: LitTokenType = LitTokenType.REGULAR) -> int:
-        """Add a token to the vocabulary and return its ID"""
+    def _private_add_token(self, token: str, token_cls: type[Tokens], lit_type: LitTokenType = LitTokenType.REGULAR, insn_type=PlatformInstructionTypes.AGNOSTIC) -> int:
+        """Add a token to the vocabulary and return its ID, optionally setting platform instruction type."""
         if token in self.token_to_id:
             return self.token_to_id[token]
 
@@ -106,11 +110,16 @@ class VocabularyManager:
 
             # Resize id_to_token_type array
             new_token_type_array = np.empty(new_capacity, dtype=np.int8)
+            new_platform_instruction_type_cache = np.full(new_capacity, PlatformInstructionTypes.AGNOSTIC, dtype=np.int8)
             new_token_type_array[:old_capacity] = self._id_to_token_type[:old_capacity]
+            new_platform_instruction_type_cache[:old_capacity] = self._platform_instruction_type_cache[:old_capacity]
             self._id_to_token_type = new_token_type_array
+            self._platform_instruction_type_cache = new_platform_instruction_type_cache
+
 
         # Set token type
         self._id_to_token_type[token_id] = token_type
+        self._platform_instruction_type_cache[token_id] = token_type
 
         # Handle lit cache entries - only add if it's a lit token
         if lit_type == LitTokenType.LIT_START:
@@ -269,12 +278,12 @@ class VocabularyManager:
             """Represents platform-specific tokens like x86 instructions, registers, etc."""
             __slots__ = ('token', '_token_id')
 
-            def __init__(self, token: str):
+            def __init__(self, token: str, insn_type: PlatformInstructionTypes):
                 if ' ' in token:
                     raise ValueError(f"Token cannot contain spaces: '{token}'")
                 self.token = token
-                # Register the token and cache its ID
-                self._token_id = vocab_manager._private_add_token(f"{vocab_manager.platform}_{token}", self.__class__)
+                # Register the token and cache its ID, passing insn_type
+                self._token_id = vocab_manager._private_add_token(f"{vocab_manager.platform}_{token}", self.__class__, insn_type=insn_type)
 
             @classmethod
             def _from_token_ids(cls, token_ids: List[int]) -> 'PlatformTokenInner':
@@ -297,6 +306,11 @@ class VocabularyManager:
 
             def to_asm_like(self) -> str:
                 return self.token
+
+            @property
+            def platform_instruction_type(self) -> PlatformInstructionTypes:
+                """Get the platform instruction type for this token"""
+                return PlatformInstructionTypes(vocab_manager._platform_instruction_type_cache[self._token_id])
 
         # Ensure PlatformTokenInner conforms to both protocols
         assert issubclass(PlatformTokenInner, Tokens)

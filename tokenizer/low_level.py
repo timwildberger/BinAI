@@ -7,7 +7,7 @@ from tokenizer.address_meta_data_lookup import AddressMetaDataLookup
 from tokenizer.compact_base64_utils import ndarray_to_base64
 from tokenizer.compact_base64_utils import base64_to_ndarray_vec
 from tokenizer.csv_files import parse_and_save_data_sections, token_to_functions
-from tokenizer.function_filter import filter_fns, FunctionFilter
+from tokenizer.function_filter import FunctionFilter
 from tokenizer.function_token_list import FunctionTokenList
 from tokenizer.op_imm_mem import tokenize_operand_memory, tokenize_operand_immediate
 from tokenizer.opaque_remapping import apply_opaque_mapping, apply_opaque_mapping_raw_optimized
@@ -18,6 +18,7 @@ from tokenizer.constant_handler import ConstantHandler
 from tokenizer.function_data_manager import FunctionDataManager, FunctionData
 from tokenizer.instruction_sets import InstructionSets
 from tokenizer.utils import filter_queue_file_by_existing_output, pop_first_line
+from tokenizer.architecture import PlatformInstructionTypes
 from typing import Optional
 from tqdm import tqdm
 import numpy as np
@@ -162,7 +163,7 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
             skip = True
             for prefix_name in degenerate_prefixes[byte]: # Check for ambiguity for repne, repz, repnz, repe, rep
                 if insn.mnemonic.startswith(prefix_name):
-                    token = vocab_manager.PlatformToken(prefix_name)
+                    token = vocab_manager.PlatformToken(prefix_name, PlatformInstructionTypes.PREFIXES)
                     insn_tokens.append(token)
                     if VERIFICATION:
                         assert insn_tokens2 is not None
@@ -175,13 +176,17 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
 
         if byte in instr_sets.prefixes:
             prefix_name: str = instr_sets.prefixes[byte]
-            token = vocab_manager.PlatformToken(prefix_name)
+            token = vocab_manager.PlatformToken(prefix_name, PlatformInstructionTypes.PREFIXES)
             insn_tokens.append(token)
             if VERIFICATION:
                 assert insn_tokens2 is not None
                 insn_tokens2.append(token)
 
-    token = vocab_manager.PlatformToken(insn.insn.insn_name())
+    # Determine instruction type using instr_sets
+    insn_name = insn.insn.insn_name()
+    insn_type = instr_sets.get_instruction_type(insn_name)
+
+    token = vocab_manager.PlatformToken(insn_name, insn_type)
     insn_tokens.append(token)
     if VERIFICATION:
         assert insn_tokens2 is not None
