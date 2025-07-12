@@ -1,18 +1,30 @@
 import re
 
-import numpy
 import numpy as np
 
 from tokenizer.function_token_list import FunctionTokenList
 from tokenizer.token_manager import VocabularyManager
-from tokenizer.tokens import MemoryOperandSymbol
+from tokenizer.token_pattern import RepeatType, TokenPattern
+from tokenizer.tokens import MemoryOperandSymbol, TokenType
+from tokenizer.architecture import PlatformInstructionTypes
 
 
 class FunctionFilter:
     def __init__(self, vm: VocabularyManager):
-        self.jump_only_fn = [vm.Block_Def, vm.Block(0), vm.PlatformToken("jmp"),
-                        vm.MemoryOperand(MemoryOperandSymbol.OPEN_BRACKET), vm.Opaque_Const(0),
-                        vm.MemoryOperand(MemoryOperandSymbol.CLOSE_BRACKET)]
+        # TokenPattern for a jump-only function:
+        # Block_Def, Block(0), [RepeatType.MAYBE, PlatformInstructionTypes.PREFIXES], PlatformInstructionTypes.CONTROL_FLOW,
+        # [RepeatType.MAYBE, PlatformInstructionTypes.POINTER_LENGTHS], MemoryOperandSymbol.OPEN_BRACKET,
+        # PlatformInstructionTypes.OTHER, MemoryOperandSymbol.CLOSE_BRACKET
+        self.jump_only_pattern = TokenPattern(
+            TokenType.BLOCK_DEF,
+            TokenType.BLOCK,
+            (RepeatType.MAYBE, PlatformInstructionTypes.PREFIXES),
+            PlatformInstructionTypes.CONTROL_FLOW,
+            (RepeatType.MAYBE, PlatformInstructionTypes.POINTER_LENGTHS),
+            MemoryOperandSymbol.OPEN_BRACKET,
+            TokenType.OPAQUE_CONST,
+            MemoryOperandSymbol.CLOSE_BRACKET
+        )
 
 
     def check_function_just_jump(self, fn_tokens: FunctionTokenList) -> bool:
@@ -67,3 +79,7 @@ class FunctionFilter:
                     return True
 
         return False
+
+
+# --- TESTS ---
+

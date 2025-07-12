@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import IntEnum
 
 
-class PlatformInstructionTypes(Enum):
+class PlatformInstructionTypes(IntEnum):
     AGNOSTIC = -1
     ARITHMETIC = 0
     PREFIXES = 1
