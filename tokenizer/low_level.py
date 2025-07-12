@@ -1,14 +1,13 @@
-import re
 import angr
 import pickle
-import csv, json
+import json
 import time
 from pathlib import Path
 from tokenizer.address_meta_data_lookup import AddressMetaDataLookup
 from tokenizer.compact_base64_utils import ndarray_to_base64
 from tokenizer.compact_base64_utils import base64_to_ndarray_vec
-from tokenizer.csv_files import parse_and_save_data_sections, token_to_insn, compare_csv_files, vocab_from_output, \
-    token_to_functions
+from tokenizer.csv_files import parse_and_save_data_sections, token_to_functions
+from tokenizer.function_filter import filter_fns, FunctionFilter
 from tokenizer.function_token_list import FunctionTokenList
 from tokenizer.op_imm_mem import tokenize_operand_memory, tokenize_operand_immediate
 from tokenizer.opaque_remapping import apply_opaque_mapping, apply_opaque_mapping_raw_optimized
@@ -19,7 +18,7 @@ from tokenizer.constant_handler import ConstantHandler
 from tokenizer.function_data_manager import FunctionDataManager, FunctionData
 from tokenizer.instruction_sets import InstructionSets
 from tokenizer.utils import filter_queue_file_by_existing_output, pop_first_line
-from typing import Optional, Any
+from typing import Optional
 from tqdm import tqdm
 import numpy as np
 import numpy.typing as npt
@@ -317,12 +316,15 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
 def main_loop(instr_sets, cfg, constant_list,
               func_addr_range, func_disas, func_disas_token, func_name_addr, func_names, inv_prefix_tokens, lookup,
               resolver, text_end, text_start, vocab_manager, path, **_kwargs) -> FunctionDataManager:
-    
 
+    filter = FunctionFilter(vocab_manager)
 
     # Initialize FunctionDataManager with pre-allocated arrays
     total_functions = len(cfg.functions.items())
-    function_manager = FunctionDataManager(total_functions, vocab_manager)
+    if VERIFICATION:
+        function_manager = FunctionDataManager(total_functions)
+
+
     with open(f"{path.absolute().name}_output.csv", "w", newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         # Write header with occurrence column added
@@ -387,62 +389,16 @@ def main_loop(instr_sets, cfg, constant_list,
         # Create token stream directly from temp_bbs (which already contains TokensRepl objects)
         # temp_tk = [tokens for (addr, tokens) in temp_bbs]
 
+
+
+
         tokenized_instructions, block_run_lengths, insn_run_lengths = (
             build_vocab_tokenize_and_index(func_tokens)
         )
+
         if len(tokenized_instructions) == 0:
             continue
 
-        def check_function_just_jump() -> bool:
-            """Returns true if function contains only one jump instruction.
-            → Remove 'nop' (single and repetitions)
-            → Remove "hlt
-            """"""
-            if len(block_run_lengths) > 1:
-                return False
-            """
-
-            # remove nop only and hlt
-            if len(block_run_lengths) == 1:
-                arr = np.asarray(func_tokens.insn_strs[1:], dtype=object)
-
-                # Create boolean mask for endpadding
-                is_zero = (arr == 0) | (arr == "0")
-
-                # Mask for non-zero-elements
-                non_zero = arr[~is_zero]
-
-                if non_zero.size == 0:
-                    # only zeros → Treat as invalid
-                    raise ValueError("Function only contains padding and should have been removed.")
-                
-                allowed = ["nop ", "hlt ", "ret "]
-                is_padding = np.isin(non_zero, allowed)
-
-                if np.all(is_padding):
-                    print(f"\nREMOVED {func_name}: {func_tokens.insn_strs}")
-                    return True
-
-            insn_mask = np.array([2, 7])
-            if insn_run_lengths.shape == (2,):
-                if np.array_equal(insn_mask.flatten(), insn_run_lengths):
-                    jmp_indirect_pattern = re.compile(
-                        r'^jmp\s+'
-                        r'(?:[a-z]{1,8}word\s+)?'         # optional size prefix like dword/qword/xmmword
-                        r'ptr\s*'
-                        r'\[\s*[^]]+\s*\]$',              # everything inside brackets, anything except ]
-                        re.IGNORECASE
-                    )
-                    if str(func_tokens.insn_strs[1]).split(" ")[0] in instr_sets.addressing_control_flow:
-                        print(f"\nREMOVED {func_name}: {func_tokens.insn_strs}")
-                        return True
-                    #raise ValueError("HAH FOUND YA")
-            """
-            for t1, t2 in zip(tokens, jump_only_fn):
-                if t1 != t2:
-                    return False
-                    """
-            return False
         try:
             tokens_base64 = ndarray_to_base64(tokenized_instructions)
             block_base64 = ndarray_to_base64(block_run_lengths)
@@ -453,7 +409,7 @@ def main_loop(instr_sets, cfg, constant_list,
                 occurence = 0
             with open(f"{path.absolute().name}_output.csv", "a", newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
-                if not check_function_just_jump():
+                if not filter_fns(block_run_lengths, func_tokens, func_name, insn_run_lengths, instr_sets):
                     row = [
                         func_name,  # Keep original function name unchanged
                         occurence,  # Add occurrence as separate column
