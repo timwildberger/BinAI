@@ -1,3 +1,4 @@
+import re
 import angr
 import pickle
 import csv, json
@@ -85,7 +86,8 @@ def fill_constant_candidates(
 
     num_blocks = sum(1 for _ in func.blocks)
     
-    if num_blocks == 1 and next(func.blocks).capstone.insns is None:
+    # Remove all functions that only contain one empty block
+    if num_blocks == 1 and not next(func.blocks).capstone.insns:
         return None
     
     func_tokens = FunctionTokenList(num_blocks, vocab_manager=vocab_manager)
@@ -327,6 +329,7 @@ def main_loop(instr_sets, cfg, constant_list,
         writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata', f'"{",".join(vocab_manager.id_to_token)}"'])
 
     occurence = 0
+    prev_func_name = ""
     for func_addr, func in tqdm(iterable=sorted(cfg.functions.items(), key=lambda item: item[1].name),
                                 desc="Retrieving data from alllll functions. Like a big boy."):
         func_name = cfg.functions[func_addr].name
@@ -390,40 +393,77 @@ def main_loop(instr_sets, cfg, constant_list,
         if len(tokenized_instructions) == 0:
             continue
 
-        def check_function_just_jump(tokens, block_runglengths, insn_runlength) -> bool:
-            """Returns true if function contains only one jump instruction."""
+        def check_function_just_jump() -> bool:
+            """Returns true if function contains only one jump instruction.
+            → Remove 'nop' (single and repetitions)
+            → Remove "hlt
+            """"""
             if len(block_run_lengths) > 1:
                 return False
+            """
 
-            if insn_run_lengths[0] != 6: # [Block_Def, Block_0, jmp, [, Opaque_Const_0, ]]
-                print(insn_run_lengths)
-                return False
+            # remove nop only and hlt
+            if len(block_run_lengths) == 1:
+                arr = np.asarray(func_tokens.insn_strs[1:], dtype=object)
+
+                # Create boolean mask for endpadding
+                is_zero = (arr == 0) | (arr == "0")
+
+                # Mask for non-zero-elements
+                non_zero = arr[~is_zero]
+
+                if non_zero.size == 0:
+                    # only zeros → Treat as invalid
+                    raise ValueError("Function only contains padding and should have been removed.")
+                
+                allowed = ["nop ", "hlt ", "ret "]
+                is_padding = np.isin(non_zero, allowed)
+
+                if np.all(is_padding):
+                    print(f"\nREMOVED {func_name}: {func_tokens.insn_strs}")
+                    return True
+
+            insn_mask = np.array([2, 7])
+            if insn_run_lengths.shape == (2,):
+                if np.array_equal(insn_mask.flatten(), insn_run_lengths):
+                    jmp_indirect_pattern = re.compile(
+                        r'^jmp\s+'
+                        r'(?:[a-z]{1,8}word\s+)?'         # optional size prefix like dword/qword/xmmword
+                        r'ptr\s*'
+                        r'\[\s*[^]]+\s*\]$',              # everything inside brackets, anything except ]
+                        re.IGNORECASE
+                    )
+                    if str(func_tokens.insn_strs[1]).split(" ")[0] in instr_sets.addressing_control_flow:
+                        print(f"\nREMOVED {func_name}: {func_tokens.insn_strs}")
+                        return True
+                    #raise ValueError("HAH FOUND YA")
             """
             for t1, t2 in zip(tokens, jump_only_fn):
                 if t1 != t2:
                     return False
                     """
-            print(f"HUCH")
-            print(insn_base64)
-            print(block_run_lengths)
-            print(insn_run_lengths)
-            return True
+            return False
         try:
             tokens_base64 = ndarray_to_base64(tokenized_instructions)
             block_base64 = ndarray_to_base64(block_run_lengths)
             insn_base64 = ndarray_to_base64(insn_run_lengths)
+            if prev_func_name == func_name:
+                occurence += 1
+            else:
+                occurence = 0
             with open(f"{path.absolute().name}_output.csv", "a", newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
-                if not check_function_just_jump(tokens_base64, block_base64, insn_base64):
+                if not check_function_just_jump():
                     row = [
                         func_name,  # Keep original function name unchanged
-                        0,  # Add occurrence as separate column
+                        occurence,  # Add occurrence as separate column
                         tokens_base64,
                         block_base64,
                         insn_base64,
                         str(repr(meta_result))
                     ]
                     writer.writerow(row)
+                prev_func_name = func_name
 
 
             if VERIFICATION:
