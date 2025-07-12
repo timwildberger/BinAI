@@ -333,7 +333,7 @@ def main_loop(instr_sets, cfg, constant_list,
             continue
 
         # Reset block counter for each function so block IDs start from 0
-        resolver.reset_block_counter()
+        resolver.reset()
 
         (function_analysis) = fill_constant_candidates(
             func_addr=func_addr,

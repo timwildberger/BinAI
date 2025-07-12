@@ -51,11 +51,15 @@ class ConstantHandler:
         # Check if it's a small constant (0x00 to 0xFF)
         if is_arithmetic or 0x00 <= value <= 0xFF or value in self.constant_dict:
             return self.vocab_manager.Valued_Const(value)
-        elif match_indices.size != 0:
-            index = match_indices[0]
-            return self.vocab_manager.Block(index)
-        elif np.any((self.block_ranges[:, 0] < value) & (value < self.block_ranges[:, 1])):
-            raise ValueError(f"Value {value} is inside a block range, not allowed.")
+
+
+        match_mask = (self.block_ranges[:, 0] < value) & (value < self.block_ranges[:, 1])
+        if np.any(match_mask):
+            idx = match_mask.nonzero()[0][0]
+            if self.block_ranges[idx, 0] == value:
+                return self.vocab_manager.Block(idx)
+            else:
+                raise ValueError(f"Value {value} is inside a block range, not allowed.")
         else:
             return self._create_opaque_const(value, meta, library_type)
 

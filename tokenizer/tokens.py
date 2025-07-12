@@ -414,10 +414,12 @@ class TokenResolver:
         self.opaque_counter += 1
         return opaque_id
 
-    def reset_block_counter(self):
+    def reset(self):
         """Reset the block counter and block IDs for a new function"""
         self.block_counter = 0
+        self.opaque_counter = 0
         self.block_ids.clear()
+        self.opaque_ids.clear()
 
 
 class LitTokenType(Enum):

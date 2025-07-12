@@ -119,3 +119,9 @@ def pop_first_line(queue_file: str) -> str | None:
         f.writelines(lines[1:])
 
     return first_line
+
+
+def num_hex_digits(n):
+    if n == 0:
+        return 1
+    return (n.bit_length() + 3) // 4  # +3 to round up for full hex digits

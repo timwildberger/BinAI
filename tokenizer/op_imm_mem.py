@@ -5,8 +5,7 @@ from typing import List
 
 from tokenizer.tokens import Tokens, MemoryOperandSymbol
 from tokenizer.token_manager import VocabularyManager
-
-
+from tokenizer.utils import num_hex_digits
 
 size_map = {
     1: "byte_ptr",
@@ -157,12 +156,12 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
     tokens = []
 
     imm_val = abs(op.imm)
-    imm_val_hex = hex(imm_val)
+    imm_val_hex_len = num_hex_digits(imm_val)
 
-    if len(imm_val_hex[2:]) <= 2:  # Small immediate (0x00 to 0xFF)
+    if imm_val_hex_len <= 2:  # Small immediate (0x00 to 0xFF)
         imm_token = constant_handler.process_constant(imm_val)
         tokens.append(imm_token)
-    elif len(imm_val_hex[2:]) <= (128 / 4):  # Larger immediate (up to 128-bit)
+    elif imm_val_hex_len <= (128 / 4):  # Larger immediate (up to 128-bit)
         if insn.mnemonic in arithmetic_instructions:
             # Arithmetic instruction - treat as valued constant literal
             imm_token = constant_handler.process_constant(imm_val, is_arithmetic=True)
