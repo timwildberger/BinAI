@@ -92,19 +92,6 @@ class FunctionDataManager:
         self.current_index += 1
         return final_func_name
 
-    def check_function_just_jump(self, function_data: FunctionData):
-        if function_data.tokens.block_count > 1:
-            return False
-
-        if function_data.tokens.last_index != len(self.jump_only_fn):
-            return False
-
-        for t1, t2 in zip(function_data.tokens.iter_raw_tokens(), self.jump_only_fn):
-            if t1 != t2:
-                return False
-
-        return True
-
     
     def get_function_addr(self, func_name: str, occurrence: int = 0) -> Optional[int]:
         """Get function address by name and occurrence index."""

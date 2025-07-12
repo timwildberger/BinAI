@@ -44,7 +44,7 @@ def apply_opaque_mapping(temp_bbs, opaque_mapping, constant_handler=None):
     return updated_bbs
 
 
-def apply_opaque_mapping_raw_optimized(function_token_list: FunctionTokenList, opaque_mapping, vocab_manager: VocabularyManager, constant_handler=None):
+def apply_opaque_mapping_raw_optimized(function_token_list: FunctionTokenList, opaque_mapping, vocab_manager: VocabularyManager, constant_handler=None) -> FunctionTokenList:
     """
     Apply opaque token mapping using raw tokens for efficiency, only resolving when necessary.
 

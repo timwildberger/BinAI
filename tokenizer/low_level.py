@@ -315,6 +315,8 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
 def main_loop(instr_sets, cfg, constant_list,
               func_addr_range, func_disas, func_disas_token, func_name_addr, func_names, inv_prefix_tokens, lookup,
               resolver, text_end, text_start, vocab_manager, path, **_kwargs) -> FunctionDataManager:
+    
+
 
     # Initialize FunctionDataManager with pre-allocated arrays
     total_functions = len(cfg.functions.items())
@@ -324,7 +326,6 @@ def main_loop(instr_sets, cfg, constant_list,
         # Write header with occurrence column added
         writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata', f'"{",".join(vocab_manager.id_to_token)}"'])
 
-    prev_func_name = ""
     occurence = 0
     for func_addr, func in tqdm(iterable=sorted(cfg.functions.items(), key=lambda item: item[1].name),
                                 desc="Retrieving data from alllll functions. Like a big boy."):
@@ -389,27 +390,40 @@ def main_loop(instr_sets, cfg, constant_list,
         if len(tokenized_instructions) == 0:
             continue
 
+        def check_function_just_jump(tokens, block_runglengths, insn_runlength) -> bool:
+            """Returns true if function contains only one jump instruction."""
+            if len(block_run_lengths) > 1:
+                return False
+
+            if insn_run_lengths[0] != 6: # [Block_Def, Block_0, jmp, [, Opaque_Const_0, ]]
+                print(insn_run_lengths)
+                return False
+            """
+            for t1, t2 in zip(tokens, jump_only_fn):
+                if t1 != t2:
+                    return False
+                    """
+            print(f"HUCH")
+            print(insn_base64)
+            print(block_run_lengths)
+            print(insn_run_lengths)
+            return True
         try:
             tokens_base64 = ndarray_to_base64(tokenized_instructions)
             block_base64 = ndarray_to_base64(block_run_lengths)
             insn_base64 = ndarray_to_base64(insn_run_lengths)
-            
             with open(f"{path.absolute().name}_output.csv", "a", newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
-                if func_name == prev_func_name:
-                    occurence += 1
-                else:
-                    occurence = 0
-                row = [
-                    func_name,  # Keep original function name unchanged
-                    str(occurence),  # Add occurrence as separate column
-                    tokens_base64,
-                    block_base64,
-                    insn_base64,
-                    str(repr(meta_result))
-                ]
-                writer.writerow(row)
-            prev_func_name = func_name
+                if not check_function_just_jump(tokens_base64, block_base64, insn_base64):
+                    row = [
+                        func_name,  # Keep original function name unchanged
+                        0,  # Add occurrence as separate column
+                        tokens_base64,
+                        block_base64,
+                        insn_base64,
+                        str(repr(meta_result))
+                    ]
+                    writer.writerow(row)
 
 
             if VERIFICATION:
