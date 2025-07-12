@@ -100,8 +100,6 @@ class TokenType(IntEnum):
     IDENTIFIER_LITERAL = 8
     UNRESOLVED = -1
 
-
-
 class MemoryOperandSymbol(Enum):
     """Enum for memory operand symbols"""
     OPEN_BRACKET = "mem["
@@ -124,7 +122,6 @@ class MemoryOperandSymbol(Enum):
             return "MEM_MULTIPLY"
         else:
             raise ValueError(f"Unknown memory operand symbol: {self}")
-
 
 class Tokens(ABC):
     """Protocol for token representation objects"""
@@ -174,7 +171,6 @@ class Tokens(ABC):
 
         return (myids.shape == otherids.shape and
                 np.all(myids == otherids))
-
 
 class PlatformToken(Tokens, ABC):
     """Protocol for platform-specific tokens"""
@@ -393,10 +389,10 @@ class TokenResolver:
     def __init__(self):
         self.block_counter = 0
         self.opaque_counter = 0
-        self.block_ids = {}  # addr -> id
-        self.opaque_ids = {}  # addr -> id
+        self.block_ids: dict[int, int] = {}  # addr(int) -> id
+        self.opaque_ids: dict[int, int] = {}  # addr(int) -> id
 
-    def get_block_id(self, addr: str = None) -> int:
+    def get_block_id(self, addr: int) -> int:
         """Get or create a block ID"""
         if addr and addr in self.block_ids:
             return self.block_ids[addr]
@@ -407,7 +403,7 @@ class TokenResolver:
         self.block_counter += 1
         return block_id
 
-    def get_opaque_id(self, addr: str = None) -> int:
+    def get_opaque_id(self, addr: int) -> int:
         """Get or create an opaque constant ID"""
         if addr and addr in self.opaque_ids:
             return self.opaque_ids[addr]

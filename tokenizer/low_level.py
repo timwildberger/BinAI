@@ -18,7 +18,7 @@ from tokenizer.constant_handler import ConstantHandler
 from tokenizer.function_data_manager import FunctionDataManager, FunctionData
 from tokenizer.instruction_sets import InstructionSets
 from tokenizer.utils import filter_queue_file_by_existing_output, pop_first_line
-from typing import Optional
+from typing import Optional, Any
 from tqdm import tqdm
 import numpy as np
 import numpy.typing as npt
@@ -70,20 +70,27 @@ def fill_constant_candidates(
     func_min_addr: int = int(func_addr)
     blocks: set = set()
 
+    num_blocks = len(list(func.blocks))
+    block_ranges: np.ndarray = np.empty((num_blocks, 2), dtype=np.uint64)  # uint64 for addresses
+
+    for i, block in enumerate(func.blocks):
+        block_ranges[i, 0] = block.addr            # start address
+        block_ranges[i, 1] = block.addr + block.size  # end address
+
     # Create constant handler for this function
-    constant_handler = ConstantHandler(vocab_manager, resolver, constant_dict)
+    constant_handler = ConstantHandler(vocab_manager, resolver, constant_dict, block_ranges)
     temp_bbs: list[tuple[str, list[list[Tokens]]]] = []
     block_list: list[dict[BlockToken, tuple[int, int]]] = []
     block_dict: dict[str, BlockToken] = {}  # hex value of Block address: block_token
 
     num_blocks = sum(1 for _ in func.blocks)
-
+    
     if num_blocks == 1 and next(func.blocks).capstone.insns is None:
         return None
-
+    
     func_tokens = FunctionTokenList(num_blocks, vocab_manager=vocab_manager)
-
-    for block in func.blocks:
+    ordered_blocks = sorted(func.blocks, key=lambda b: b.addr)
+    for block in ordered_blocks:
 
         func_max_addr = max(block.addr, block.addr + block.size)
 

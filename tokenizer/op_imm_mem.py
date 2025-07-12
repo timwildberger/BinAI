@@ -112,7 +112,7 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
 
         if force_opaque:
             disp_token = constant_handler.process_constant(
-                hex(disp),
+                disp,
                 is_arithmetic=False,
                 meta=meta,
                 library_type=meta.get("library", "unknown") if meta else "unknown"
@@ -124,7 +124,7 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
             # Check if displacement is in text section or outside function bounds
             if (text_start <= disp < text_end) or (disp < func_min_addr or disp > func_max_addr):
                 disp_token = constant_handler.process_constant(
-                    hex(disp),
+                    disp,
                     is_arithmetic=False,
                     meta=meta,
                     library_type=meta.get("library", "unknown")
@@ -132,11 +132,11 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
                 tokens.append(disp_token)
             else:
                 # Local constant - treat as valued constant literal
-                disp_token = constant_handler.process_constant(hex(disp), is_arithmetic=True)
+                disp_token = constant_handler.process_constant(disp, is_arithmetic=True)
                 tokens.append(disp_token)
         else:
             # No metadata found - treat as valued constant literal
-            disp_token = constant_handler.process_constant(hex(disp), is_arithmetic=True)
+            disp_token = constant_handler.process_constant(disp, is_arithmetic=True)
             tokens.append(disp_token)
 
 
@@ -160,12 +160,12 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
     imm_val_hex = hex(imm_val)
 
     if len(imm_val_hex[2:]) <= 2:  # Small immediate (0x00 to 0xFF)
-        imm_token = constant_handler.process_constant(imm_val_hex)
+        imm_token = constant_handler.process_constant(imm_val)
         tokens.append(imm_token)
     elif len(imm_val_hex[2:]) <= (128 / 4):  # Larger immediate (up to 128-bit)
         if insn.mnemonic in arithmetic_instructions:
             # Arithmetic instruction - treat as valued constant literal
-            imm_token = constant_handler.process_constant(imm_val_hex, is_arithmetic=True)
+            imm_token = constant_handler.process_constant(imm_val, is_arithmetic=True)
             tokens.append(imm_token)
         elif insn.mnemonic in addressing_control_flow_instructions:
             # Addressing/control flow instruction - check for metadata
@@ -173,11 +173,11 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
             if meta is not None:
                 if kind == "range":
                     if func_min_addr <= imm_val < func_max_addr:  # Local
-                        imm_token = constant_handler.process_constant(imm_val_hex, is_arithmetic=True)
+                        imm_token = constant_handler.process_constant(imm_val, is_arithmetic=True)
                         tokens.append(imm_token)
                     else:  # External
                         imm_token = constant_handler.process_constant(
-                            imm_val_hex,
+                            imm_val,
                             is_arithmetic=False,
                             meta=meta,
                             library_type="function"
@@ -185,7 +185,7 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
                         tokens.append(imm_token)
                 else:
                     imm_token = constant_handler.process_constant(
-                        imm_val_hex,
+                        imm_val,
                         is_arithmetic=False,
                         meta=meta,
                         library_type="unknown"
@@ -193,7 +193,7 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
                     tokens.append(imm_token)
             else:
                 # No metadata - treat as valued constant literal
-                imm_token = constant_handler.process_constant(imm_val_hex, is_arithmetic=True)
+                imm_token = constant_handler.process_constant(imm_val, is_arithmetic=True)
                 tokens.append(imm_token)
         else:  # Fallback - create opaque constant
             meta, kind = lookup.lookup(imm_val)
@@ -207,7 +207,7 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
                     "library": "unknown",
                 }
             imm_token = constant_handler.process_constant(
-                imm_val_hex,
+                imm_val,
                 is_arithmetic=False,
                 meta=meta,
                 library_type="unknown"
