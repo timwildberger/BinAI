@@ -8,8 +8,8 @@
 #SBATCH -B 1:7:2
 #SBATCH -n 1
 
+# -------- Configuration -------- #
 MAIL_USER="tim.wildberger@campus.lmu.de"
-
 REPO_ROOT="$SLURM_SUBMIT_DIR"
 SLURM_DIR="$REPO_ROOT/slurm"
 OUT_DIR="$REPO_ROOT/out"
@@ -22,23 +22,27 @@ OUTPUT_LOG="$SLURM_DIR/output.txt"
 
 source "$REPO_ROOT/.venv/bin/activate"
 
-# Step 1: Determine number of available nodes (idle nodes in 'All' partition)
-echo "Detecting available nodes..."
-NUM_NODES=$(sinfo -h -p All -o "%D" | awk '{s+=$1} END {print s}')
-echo "Detected $NUM_NODES available node(s)."
+# -------- Node count (runtime configurable) -------- #
+# Use: NODES=5 sbatch script.sh
+if [[ -n "$NODES" ]]; then
+    NUM_NODES="$NODES"
+    echo "Using user-defined number of nodes: $NUM_NODES"
+else
+    NUM_NODES=4
+    echo "No node count specified. Falling back to default: $NUM_NODES node(s)."
+fi
 
-if [[ -z "$NUM_NODES" || "$NUM_NODES" -lt 1 ]]; then
-    echo "No available nodes detected. Exiting."
+if [[ "$NUM_NODES" -lt 1 ]]; then
+    echo "Invalid node count: $NUM_NODES. Must be >= 1. Exiting."
     exit 1
 fi
 
-# Step 2: Run binary_filter.py with number of splits
+# -------- Step 1: Generate queue files -------- #
 echo "Generating $NUM_NODES queue files using binary_filter.py..."
 python3 "$REPO_ROOT/preproc/binary_filter.py" --splits "$NUM_NODES" --output-dir "$QUEUE_DIR"
 
-# Step 3: Submit one job per queue file
+# -------- Step 2: Submit jobs for each queue file -------- #
 echo "Submitting jobs for each queue file..."
-
 DEPENDENCIES=()
 
 for QUEUE_FILE in "$QUEUE_DIR"/*.txt; do
@@ -56,14 +60,14 @@ for QUEUE_FILE in "$QUEUE_DIR"/*.txt; do
 
 source "$REPO_ROOT/.venv/bin/activate"
 cd "$REPO_ROOT"
-python3 tokenizer/low_level.py "$QUEUE_FILE"
+python3 -m tokenizer.low_level --batch "$QUEUE_FILE"
 EOF
 )
     echo "Submitted job $JOB_ID for $QUEUE_FILE"
     DEPENDENCIES+=($JOB_ID)
 done
 
-# Step 4: Final notification job
+# -------- Step 3: Final notification job -------- #
 DEPENDENCY_STRING=$(IFS=:; echo "${DEPENDENCIES[*]}")
 sbatch --dependency=afterok:$DEPENDENCY_STRING --job-name=binai-notify <<EOF
 #!/usr/bin/env bash
