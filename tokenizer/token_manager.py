@@ -85,7 +85,7 @@ class VocabularyManager:
 
 
 
-    def _private_add_token(self, token: str, token_cls: type[Tokens], lit_type: LitTokenType = LitTokenType.REGULAR, insn_type=PlatformInstructionTypes.AGNOSTIC) -> int:
+    def _private_add_token(self, token: str, token_cls: type[Tokens], lit_type: LitTokenType = LitTokenType.REGULAR, insn_type:PlatformInstructionTypes=PlatformInstructionTypes.AGNOSTIC) -> int:
         """Add a token to the vocabulary and return its ID, optionally setting platform instruction type."""
         if token in self.token_to_id:
             return self.token_to_id[token]
@@ -119,7 +119,7 @@ class VocabularyManager:
 
         # Set token type
         self._id_to_token_type[token_id] = token_type
-        self._platform_instruction_type_cache[token_id] = token_type
+        self._platform_instruction_type_cache[token_id] = insn_type
 
         # Handle lit cache entries - only add if it's a lit token
         if lit_type == LitTokenType.LIT_START:
@@ -180,7 +180,7 @@ class VocabularyManager:
         register_str = insn.reg_name(reg_id)
         token = None
         if self.registry_token_cache[reg_id] is None:
-            token = self.PlatformToken(register_str)
+            token = self.PlatformToken(register_str, insn_type=PlatformInstructionTypes.REGISTRY)
             self.registry_token_cache[reg_id] = token
         else:
             token = self.registry_token_cache[reg_id]
@@ -296,7 +296,7 @@ class VocabularyManager:
                     raise ValueError(f"Invalid platform token string: {token_str}")
 
                 platform_token = token_str[len(vocab_manager.platform) + 1:]
-                return cls(platform_token)
+                return cls(platform_token, PlatformInstructionTypes.UNRESOLVED)
 
             def get_token_ids(self) -> npt.NDArray[np.int_]:
                 return np.array([self._token_id], dtype=np.int_)

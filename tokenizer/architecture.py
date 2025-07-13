@@ -3,6 +3,7 @@ from enum import IntEnum
 
 
 class PlatformInstructionTypes(IntEnum):
+    UNRESOLVED = -2
     AGNOSTIC = -1
     ARITHMETIC = 0
     PREFIXES = 1
@@ -15,7 +16,8 @@ class PlatformInstructionTypes(IntEnum):
     SYSTEM = 8
     NOP = 9
     KERNEL_INTERACTION = 10
-    LOCKING_ATOMIC = 11
+    REGISTRY = 11
+    LOCKING_ATOMIC = 12
 
     OTHER = 127
 

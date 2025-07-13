@@ -322,7 +322,7 @@ def main_loop(instr_sets, cfg, constant_list,
               func_addr_range, func_disas, func_disas_token, func_name_addr, func_names, inv_prefix_tokens, lookup,
               resolver, text_end, text_start, vocab_manager, path, **_kwargs) -> FunctionDataManager:
 
-    filter = FunctionFilter(vocab_manager)
+    filter = FunctionFilter()
 
     # Initialize FunctionDataManager with pre-allocated arrays
     total_functions = len(cfg.functions.items())
@@ -414,7 +414,7 @@ def main_loop(instr_sets, cfg, constant_list,
                 occurence = 0
             with open(f"{path.absolute().name}_output.csv", "a", newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
-                if not filter_fns(block_run_lengths, func_tokens, func_name, insn_run_lengths, instr_sets):
+                if not filter.filter_fns(func_tokens, func_name, vocab_manager):
                     row = [
                         func_name,  # Keep original function name unchanged
                         occurence,  # Add occurrence as separate column
@@ -456,10 +456,11 @@ def main_loop(instr_sets, cfg, constant_list,
                 f"Error processing {func_name}: {e}.\nTokenstream: {func_tokens}\nTokens: {tokenized_instructions}\nBlock encoding: {block_run_lengths}\nInstructions: {insn_run_lengths}\nMetaData: {str(meta_result)}")
             raise ValueError
 
-    # Compact arrays to save memory
-    function_manager.compact_arrays()
+    if VERIFICATION:
+        # Compact arrays to save memory
+        function_manager.compact_arrays()
 
-    return function_manager
+        return function_manager
 
 
 def build_vocab_tokenize_and_index(func_tokens: FunctionTokenList) -> tuple[npt.NDArray[np.int_], npt.NDArray[np.int_], npt.NDArray[np.int_]]:
