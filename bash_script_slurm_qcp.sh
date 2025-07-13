@@ -56,7 +56,7 @@ for QUEUE_FILE in "$QUEUE_DIR"/*.txt; do
 
 source "$REPO_ROOT/.venv/bin/activate"
 cd "$REPO_ROOT"
-python3 tokenizer/low_level.py "$QUEUE_FILE"
+python3 -m tokenizer.low_level --batch "$QUEUE_FILE"
 EOF
 )
     echo "Submitted job $JOB_ID for $QUEUE_FILE"
