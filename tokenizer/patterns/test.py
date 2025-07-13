@@ -1,5 +1,6 @@
 from tokenizer.architecture import PlatformInstructionTypes
 from tokenizer.patterns import *
+from tokenizer.token_lists import BlockTokenList, InsnTokenList
 from tokenizer.tokens import MemoryOperandSymbol, TokenType
 
 
@@ -20,6 +21,10 @@ def test_jump_only_pattern():
         vm.MemoryOperand(MemoryOperandSymbol.CLOSE_BRACKET)
     ]
 
+    tokenlist = InsnTokenList.from_insn_token_list(tokens, "", vm)
+
+
+
 
     pattern = TokenPattern(BlockDef, Block + 0, Maybe + InsnPrefixes, InsnControlFlow, Maybe + InsnPointerLengths, MemOpenBracket, OpaqueConst + 0, MemCloseBracket)
 
@@ -38,6 +43,8 @@ def test_jump_only_pattern():
 
     # Should match (no prefix, no pointer type)
     if not pattern.match(iter(tokens), vm, True):
+        raise AssertionError(f"Correct jump-only pattern should match: {pattern.get_error()}") from pattern.get_error()
+    if not pattern.match(iter(tokenlist), vm, True):
         raise AssertionError(f"Correct jump-only pattern should match: {pattern.get_error()}") from pattern.get_error()
 
     # Add a prefix token (should still match)
