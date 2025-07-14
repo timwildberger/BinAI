@@ -4,7 +4,7 @@ import numpy as np
 
 from tokenizer.function_token_list import FunctionTokenList
 from tokenizer.patterns import MemCloseBracket, OpaqueConst, MemOpenBracket, InsnPointerLengths, Maybe, InsnNop, Multi, \
-    InsnPrefixes, InsnControlFlow, BlockDef, Block
+    InsnPrefixes, InsnControlFlow, BlockDef, Block, MemPlus, ValuedConst, InsnRegistry
 from tokenizer.patterns.matcher import TokenPattern
 from tokenizer.token_manager import VocabularyManager
 
@@ -16,7 +16,10 @@ class FunctionFilter:
         # [RepeatType.MAYBE, PlatformInstructionTypes.POINTER_LENGTHS], MemoryOperandSymbol.OPEN_BRACKET,
         # PlatformInstructionTypes.OTHER, MemoryOperandSymbol.CLOSE_BRACKET
         self.jump_only_pattern = TokenPattern(BlockDef, Block + 0, Maybe + InsnPrefixes, InsnControlFlow,
-                                              Maybe + InsnPointerLengths, MemOpenBracket, OpaqueConst + 0, MemCloseBracket)
+                                              Maybe + InsnPointerLengths, MemOpenBracket,
+                                              Maybe + [InsnRegistry, MemPlus],
+                                              (OpaqueConst + 0) | ValuedConst,
+                                              MemCloseBracket)
         self.nop_only_pattern = TokenPattern(Maybe + InsnPrefixes, Multi + InsnNop, Maybe + [Maybe + InsnPointerLengths, MemOpenBracket, OpaqueConst + 0, MemCloseBracket])
 
 

@@ -55,6 +55,7 @@ InsnPointerLengths: PatternParseBase
 InsnPrefixes: PatternParseBase
 InsnStrings: PatternParseBase
 InsnSystem: PatternParseBase
+InsnRegistry: PatternParseBase
 Lookahead: PatternParseBase
 Maybe: PatternParseBase
 MemCloseBracket: PatternParseBase
