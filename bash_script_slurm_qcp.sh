@@ -26,7 +26,6 @@ OUTPUT_LOG="$SLURM_DIR/output.txt"
 source "$REPO_ROOT/.venv/bin/activate"
 
 # -------- Node count (runtime configurable) -------- #
-# Use: NODES=5 sbatch script.sh
 if [[ -n "$NODES" ]]; then
     NUM_NODES="$NODES"
     echo "Using user-defined number of nodes: $NUM_NODES"
@@ -50,9 +49,8 @@ DEPENDENCIES=()
 
 for QUEUE_FILE in "$QUEUE_DIR"/*.txt; do
     BASENAME=$(basename "$QUEUE_FILE" .txt)
-    JOB_ID=$(sbatch --parsable --export=ALL,SKIP_EXISTING=$SKIP_EXISTING <<EOF
-
-#!/usr/bin/env bash
+    JOB_ID=$(sbatch --parsable --export=ALL,SKIP_EXISTING=$SKIP_EXISTING,QUEUE_FILE="$QUEUE_FILE",REPO_ROOT="$REPO_ROOT",SLURM_DIR="$SLURM_DIR" <<'EOF'
+#!/bin/bash
 #SBATCH --job-name=binai-$BASENAME
 #SBATCH --output=$SLURM_DIR/slurm_%x.out
 #SBATCH --error=$SLURM_DIR/slurm_%x.err
@@ -60,16 +58,16 @@ for QUEUE_FILE in "$QUEUE_DIR"/*.txt; do
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=14
 #SBATCH --partition=All
-#SBATCH --comment="Process queue file $QUEUE_FILE"
+#SBATCH --comment="Process queue file"
 
 source "$REPO_ROOT/.venv/bin/activate"
 cd "$REPO_ROOT"
 
-NUM_CPUS=\$((SLURM_CPUS_PER_TASK - 1))
-echo "Launching \$NUM_CPUS workers for $QUEUE_FILE"
+NUM_CPUS=$((SLURM_CPUS_PER_TASK - 1))
+echo "Launching $NUM_CPUS workers for $QUEUE_FILE with SKIP_EXISTING=$SKIP_EXISTING"
 
-for i in \$(seq 1 \$NUM_CPUS); do
-    if [[ "\$SKIP_EXISTING" == "1" ]]; then
+for i in $(seq 1 $NUM_CPUS); do
+    if [[ "$SKIP_EXISTING" == "1" ]]; then
         python3 -m tokenizer.low_level --batch "$QUEUE_FILE" --skip_existing &
     else
         python3 -m tokenizer.low_level --batch "$QUEUE_FILE" &
@@ -83,3 +81,18 @@ EOF
     echo "Submitted job $JOB_ID for $QUEUE_FILE"
     DEPENDENCIES+=($JOB_ID)
 done
+
+# -------- Optional: Final notification -------- #
+DEPENDENCY_STRING=$(IFS=:; echo "${DEPENDENCIES[*]}")
+sbatch --dependency=afterok:$DEPENDENCY_STRING --job-name=binai-notify <<EOF
+#!/bin/bash
+#SBATCH --output=$SLURM_DIR/slurm_notify.out
+#SBATCH --error=$SLURM_DIR/slurm_notify.err
+#SBATCH --ntasks=1
+#SBATCH --time=00:01:00
+#SBATCH --partition=All
+
+echo "All child SLURM jobs completed for binai." | mail -s "binai job complete" $MAIL_USER
+EOF
+
+echo "All subjobs submitted. Final notification job scheduled."
