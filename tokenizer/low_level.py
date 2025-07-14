@@ -12,7 +12,7 @@ from tokenizer.function_token_list import FunctionTokenList
 from tokenizer.op_imm_mem import tokenize_operand_memory, tokenize_operand_immediate
 from tokenizer.opaque_remapping import apply_opaque_mapping, apply_opaque_mapping_raw_optimized
 from tokenizer.token_lists import BlockTokenList
-from tokenizer.tokens import TokenResolver, Tokens, BlockToken
+from tokenizer.tokens import TokenResolver, Tokens, BlockToken, TokenType
 from tokenizer.token_manager import VocabularyManager
 from tokenizer.constant_handler import ConstantHandler
 from tokenizer.function_data_manager import FunctionDataManager, FunctionData
@@ -330,91 +330,109 @@ def main_loop(instr_sets, cfg, constant_list,
         function_manager = FunctionDataManager(total_functions)
 
 
+    exceptions = []
+
     with open(f"{path.absolute().name}_output.csv", "w", newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         # Write header with occurrence column added
-        writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata', f'"{",".join(vocab_manager.id_to_token)}"'])
+        writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata'])
 
-    occurence = 0
-    prev_func_name = ""
-    for func_addr, func in tqdm(iterable=sorted(cfg.functions.items(), key=lambda item: item[1].name),
-                                desc="Retrieving data from alllll functions. Like a big boy."):
-        func_name = cfg.functions[func_addr].name
-        if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
-            continue
-
-        # Reset block counter for each function so block IDs start from 0
-        resolver.reset()
-
-        (function_analysis) = fill_constant_candidates(
-            func_addr=func_addr,
-            func=func,
-            instr_sets=instr_sets,
-            constant_dict=constant_list,
-            lookup=lookup,
-            text_start=text_start,
-            text_end=text_end,
-            resolver=resolver,
-            vocab_manager=vocab_manager,
-        )
-
-        if function_analysis is None:
-            continue
-
-        (temp_bbs,
-        block_list,
-        block_dict,
-        constant_handler,
-        func_tokens) = function_analysis
-
-        func_addr_range[func_addr] = sorted(
-            block_list, key=lambda d: list(d.values())[0][0]
-        )
-
-
-        # Create mapping from old opaque tokens to new sorted tokens
-        opaque_mapping = constant_handler.create_opaque_mapping()
-
-        # Apply the mapping to replace opaque tokens in temp_bbs
-        if len(opaque_mapping) > 0:
-            func_tokens = apply_opaque_mapping_raw_optimized(func_tokens, opaque_mapping, vocab_manager, constant_handler)
-            if VERIFICATION:
-                temp_bbs = apply_opaque_mapping(temp_bbs, opaque_mapping, constant_handler=None) #do not reorder constant_handler twice
-
-        if VERIFICATION:
-            for (x, y) in zip([token for (_, block) in temp_bbs for insn in block for token in insn], func_tokens.iter_raw_tokens()):
-                if x != y:
-                    print(f"Token mismatch: {x} != {y}")
-                    raise ValueError("Token mismatch in disassembly list")
-
-        # Get metadata from constant handler
-        opaque_metadata = constant_handler.get_metadata()
-        meta_result = list(opaque_metadata.values())
-
-        # Create token stream directly from temp_bbs (which already contains TokensRepl objects)
-        # temp_tk = [tokens for (addr, tokens) in temp_bbs]
-
-
-
-
-        tokenized_instructions, block_run_lengths, insn_run_lengths = (
-            build_vocab_tokenize_and_index(func_tokens)
-        )
-
-        if len(tokenized_instructions) == 0:
-            continue
+        occurence = 0
+        prev_func_name = ""
+        prev_tokens_base64 = ""
+        prev_block_base64 = ""
+        prev_insn_base64 = ""
 
         try:
-            tokens_base64 = ndarray_to_base64(tokenized_instructions)
-            block_base64 = ndarray_to_base64(block_run_lengths)
-            insn_base64 = ndarray_to_base64(insn_run_lengths)
-            if prev_func_name == func_name:
-                occurence += 1
-            else:
-                occurence = 0
-            with open(f"{path.absolute().name}_output.csv", "a", newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
-                if not filter.filter_fns(func_tokens, func_name, vocab_manager):
+            for func_addr, func in tqdm(iterable=sorted(cfg.functions.items(), key=lambda item: item[1].name),
+                                    desc="Retrieving data from alllll functions. Like a big boy."):
+                func_name = cfg.functions[func_addr].name
+                if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
+                    continue
+
+                # Reset block counter for each function so block IDs start from 0
+                resolver.reset()
+
+                try:
+                    (function_analysis) = fill_constant_candidates(
+                        func_addr=func_addr,
+                        func=func,
+                        instr_sets=instr_sets,
+                        constant_dict=constant_list,
+                        lookup=lookup,
+                        text_start=text_start,
+                        text_end=text_end,
+                        resolver=resolver,
+                        vocab_manager=vocab_manager,
+                    )
+                except Exception as e:
+                    print(f"Error processing {func_name}: {e}. Skipping function.")
+                    exceptions.append(e)
+                    continue
+
+                if function_analysis is None:
+                    continue
+
+                (temp_bbs,
+                block_list,
+                block_dict,
+                constant_handler,
+                func_tokens) = function_analysis
+
+                func_addr_range[func_addr] = sorted(
+                    block_list, key=lambda d: list(d.values())[0][0]
+                )
+
+
+                # Create mapping from old opaque tokens to new sorted tokens
+                opaque_mapping = constant_handler.create_opaque_mapping()
+
+                # Apply the mapping to replace opaque tokens in temp_bbs
+                if len(opaque_mapping) > 0:
+                    func_tokens = apply_opaque_mapping_raw_optimized(func_tokens, opaque_mapping, vocab_manager, constant_handler)
+                    if VERIFICATION:
+                        temp_bbs = apply_opaque_mapping(temp_bbs, opaque_mapping, constant_handler=None) #do not reorder constant_handler twice
+
+                if VERIFICATION:
+                    for (x, y) in zip([token for (_, block) in temp_bbs for insn in block for token in insn], func_tokens.iter_raw_tokens()):
+                        if x != y:
+                            print(f"Token mismatch: {x} != {y}")
+                            raise ValueError("Token mismatch in disassembly list")
+
+                # Get metadata from constant handler
+                opaque_metadata = constant_handler.get_metadata()
+                meta_result = list(opaque_metadata.values())
+
+                # Create token stream directly from temp_bbs (which already contains TokensRepl objects)
+                # temp_tk = [tokens for (addr, tokens) in temp_bbs]
+
+
+
+
+                tokenized_instructions, block_run_lengths, insn_run_lengths = (
+                    build_vocab_tokenize_and_index(func_tokens)
+                )
+
+                if len(tokenized_instructions) == 0:
+                    continue
+
+                try:
+                    tokens_base64 = ndarray_to_base64(tokenized_instructions)
+                    block_base64 = ndarray_to_base64(block_run_lengths)
+                    insn_base64 = ndarray_to_base64(insn_run_lengths)
+                    if prev_func_name == func_name:
+                        occurence += 1
+                    else:
+                        occurence = 0
+                    writer = csv.writer(csvfile)
+                    if filter.filter_fns(func_tokens, func_name, vocab_manager):
+                        occurence -= 1
+                        continue
+
+                    if prev_block_base64 == block_base64 and prev_insn_base64 == insn_base64 and prev_tokens_base64 == tokens_base64:
+                        occurence -= 1
+                        continue
+
                     row = [
                         func_name,  # Keep original function name unchanged
                         occurence,  # Add occurrence as separate column
@@ -423,38 +441,67 @@ def main_loop(instr_sets, cfg, constant_list,
                         insn_base64,
                         str(repr(meta_result))
                     ]
+
                     writer.writerow(row)
-                prev_func_name = func_name
+                    prev_func_name = func_name
+
+                    prev_tokens_base64 = tokens_base64
+                    prev_block_base64 = block_base64
+                    prev_insn_base64 = insn_base64
 
 
-            if VERIFICATION:
-                assert np.all(base64_to_ndarray_vec(tokens_base64) == tokenized_instructions), "Base64 conversion failed for tokens"
-                assert np.all(base64_to_ndarray_vec(block_base64) == block_run_lengths), "Base64 conversion failed for block run lengths"
-                assert np.all(base64_to_ndarray_vec(insn_base64) == insn_run_lengths), "Base64 conversion failed for instruction run lengths"
-                # Create FunctionData instance
-                function_data = FunctionData(
-                    tokens=func_tokens,
-                    tokens_base64=tokens_base64,
-                    block_runlength_base64=block_base64,
-                    instruction_runlength_base64=insn_base64,
-                    opaque_metadata=repr(meta_result)
-                )
-                # Add all function data in one operation and get the final function name
-                final_func_name = function_manager.add_function_data(
-                    func_name, func_addr, temp_bbs, func_tokens, function_data
-                )
+                    if VERIFICATION:
+                        assert np.all(base64_to_ndarray_vec(tokens_base64) == tokenized_instructions), "Base64 conversion failed for tokens"
+                        assert np.all(base64_to_ndarray_vec(block_base64) == block_run_lengths), "Base64 conversion failed for block run lengths"
+                        assert np.all(base64_to_ndarray_vec(insn_base64) == insn_run_lengths), "Base64 conversion failed for instruction run lengths"
+                        # Create FunctionData instance
+                        function_data = FunctionData(
+                            tokens=func_tokens,
+                            tokens_base64=tokens_base64,
+                            block_runlength_base64=block_base64,
+                            instruction_runlength_base64=insn_base64,
+                            opaque_metadata=repr(meta_result)
+                        )
+                        # Add all function data in one operation and get the final function name
+                        final_func_name = function_manager.add_function_data(
+                            func_name, func_addr, temp_bbs, func_tokens, function_data
+                        )
 
-                # Update legacy data structures for backward compatibility
-                func_name_addr[final_func_name] = func_addr
-                func_disas[final_func_name] = temp_bbs
-                func_disas_token[final_func_name] = func_tokens
-                func_names.append(final_func_name)
-
-
+                        # Update legacy data structures for backward compatibility
+                        func_name_addr[final_func_name] = func_addr
+                        func_disas[final_func_name] = temp_bbs
+                        func_disas_token[final_func_name] = func_tokens
+                        func_names.append(final_func_name)
+                except Exception as e:
+                    print(
+                        f"Error saving {func_name}: {e}.\nTokenstream: {func_tokens}\nTokens: {tokenized_instructions}\nBlock encoding: {block_run_lengths}\nInstructions: {insn_run_lengths}\nMetaData: {str(meta_result)}")
+                    exceptions.append(e)
+                    continue
         except Exception as e:
-            print(
-                f"Error processing {func_name}: {e}.\nTokenstream: {func_tokens}\nTokens: {tokenized_instructions}\nBlock encoding: {block_run_lengths}\nInstructions: {insn_run_lengths}\nMetaData: {str(meta_result)}")
-            raise ValueError
+            print(f"Unrecoverable error in main loop: {e}, writing what we have at least")
+            exceptions.append(e)
+
+
+
+        token_count = len(vocab_manager.id_to_token)
+        writer.writerow(["vocabulary",
+                         f'"{",".join(vocab_manager.id_to_token)}"',
+                         f"_id_to_token_type norm:{0 + TokenType.UNRESOLVED}", # need to normalize as ndarray_to_base64 only supports >= 0
+                         ndarray_to_base64(vocab_manager._id_to_token_type[:token_count] - TokenType.UNRESOLVED),
+                         f"_platform_instruction_type_cache norm:{0 + PlatformInstructionTypes.UNRESOLVED}", # need to normalize as ndarray_to_base64 only supports >= 0
+                         ndarray_to_base64(vocab_manager._platform_instruction_type_cache[:token_count] - PlatformInstructionTypes.UNRESOLVED),
+                         "_lit_start_cache",
+                         ndarray_to_base64(vocab_manager._lit_start_cache[:vocab_manager._lit_start_count]),
+                         "_lit_end_cache",
+                         ndarray_to_base64(vocab_manager._lit_end_cache[:vocab_manager._lit_end_count]),
+                         ])
+
+    if len(exceptions) > 0:
+        all_exection_string = "\n".join([str(e) for e in exceptions])
+        raise Exception(f"Errors occurred during disassembly:\n{all_exection_string}") from exceptions[-1]
+
+
+
 
     if VERIFICATION:
         # Compact arrays to save memory

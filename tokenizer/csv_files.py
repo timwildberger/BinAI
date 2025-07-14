@@ -173,10 +173,10 @@ def reverse_tokenization(
 
         for _ in range(insn_len):
             token_id = int(tokenized_instructions[token_index])
-            """if vocab[token_id] == "VALUED_CONST_34":
-                print(f"token_id={token_id}, token={vocab[token_id]}")
-                print(f"Tokenized instructions: {tokenized_instructions}")
-                return None"""
+            # """if vocab[token_id] == "VALUED_CONST_34":
+            #     print(f"token_id={token_id}, token={vocab[token_id]}")
+            #     print(f"Tokenized instructions: {tokenized_instructions}")
+            #     return None"""
             insn_tokens.append(vocab[token_id])
             token_index += 1
         instructions.append(insn_tokens)

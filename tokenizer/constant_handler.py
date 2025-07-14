@@ -58,7 +58,8 @@ class ConstantHandler:
             if self.block_ranges[idx, 0] == value:
                 return self.vocab_manager.Block(idx)
             else:
-                raise ValueError(f"Value {value} is inside a block range, not allowed.")
+                return self._create_opaque_const(value, meta, library_type)
+                # raise ValueError(f"Value {value} is inside a block range, not allowed.") todo undo
         else:
             return self._create_opaque_const(value, meta, library_type)
 

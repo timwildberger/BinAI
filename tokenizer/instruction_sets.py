@@ -1,6 +1,23 @@
-"""
-Instruction sets classification for assembly instruction categorization.
-"""
+# """
+#         for func_name, occurrence in sorted_keys:
+#             index = self.access_map[(func_name, occurrence)]
+#             yield func_name, occurrence, self.function_data_array[index]
+#
+#     def iter_all_data(self) -> Iterator[Tuple[str, int, int, Any, Any, FunctionData]]:
+#         """Iterate over all data at once for maximum efficiency."""
+#         # Create a sorted list of keys to ensure consistent ordering
+#         sorted_keys = sorted(self.access_map.keys())
+#         for func_name, occurrence in sorted_keys:
+#             index = self.access_map[(func_name, occurrence)]
+#             yield (func_name, occurrence,
+#                    self.func_name_addr_array[index],
+#                    self.func_disas_array[index],
+#                    self.func_disas_token_array[index],
+#                    self.function_data_array[index])
+#
+#     def get_used_count(self) -> int:
+# Instruction sets classification for assembly instruction categorization.
+# """
 from pathlib import Path
 from tokenizer.architecture import PlatformInstructionTypes
 
