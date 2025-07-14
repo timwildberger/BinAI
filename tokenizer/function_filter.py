@@ -38,11 +38,11 @@ class FunctionFilter:
 
 
         if self.jump_only_pattern.match(fn_tokens.iter_raw_tokens(), vm):
-            print(f"\nREMOVED {func_name}: {fn_tokens.to_asm_original()} / {fn_tokens.to_asm_like()}")
+            print(f"\nREMOVED JUMP_ONLY {func_name}: {fn_tokens.to_asm_original()} / {fn_tokens.to_asm_like()}")
 
 
         if self.nop_only_pattern.match(fn_tokens.iter_raw_tokens(), vm):
-            print(f"\nREMOVED {func_name}: {fn_tokens.to_asm_original()} / {fn_tokens.to_asm_like()}")
+            print(f"\nREMOVED NOP_ONLY {func_name}: {fn_tokens.to_asm_original()} / {fn_tokens.to_asm_like()}")
 
         # remove nop only and hlt
         if fn_tokens.block_count == 1:
@@ -52,7 +52,7 @@ class FunctionFilter:
             is_padding = np.isin(arr, allowed)
 
             if np.all(is_padding):
-                print(f"\nREMOVED {func_name}: {fn_tokens.to_asm_original()} / {fn_tokens.to_asm_like()}")
+                print(f"\nREMOVED RETURN_ONLY {func_name}: {fn_tokens.to_asm_original()} / {fn_tokens.to_asm_like()}")
 
         # insn_mask = np.array([2, 7])
         # if insn_run_lengths.shape == (2,):

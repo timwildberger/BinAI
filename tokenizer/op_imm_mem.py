@@ -117,7 +117,7 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
                 meta=meta,
                 library_type=meta.get("library", "unknown") if meta else "unknown"
             )
-            tokens.append(disp_token)
+            tokens.extend(disp_token)
         # For larger displacements, check if pointing to known constant or code or opaque
         meta, kind = lookup.lookup(disp)
         if meta is not None:
@@ -129,15 +129,15 @@ def tokenize_operand_memory(insn, lookup, op, text_end, text_start,
                     meta=meta,
                     library_type=meta.get("library", "unknown")
                 )
-                tokens.append(disp_token)
+                tokens.extend(disp_token)
             else:
                 # Local constant - treat as valued constant literal
                 disp_token = constant_handler.process_constant(disp, is_arithmetic=True)
-                tokens.append(disp_token)
+                tokens.extend(disp_token)
         else:
             # No metadata found - treat as valued constant literal
             disp_token = constant_handler.process_constant(disp, is_arithmetic=True)
-            tokens.append(disp_token)
+            tokens.extend(disp_token)
 
 
     tokens.append(vocab_manager.MemoryOperand(MemoryOperandSymbol.CLOSE_BRACKET))
@@ -161,12 +161,12 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
 
     if imm_val_hex_len <= 2:  # Small immediate (0x00 to 0xFF)
         imm_token = constant_handler.process_constant(imm_val)
-        tokens.append(imm_token)
+        tokens.extend(imm_token)
     elif imm_val_hex_len <= (128 / 4):  # Larger immediate (up to 128-bit)
         if insn.mnemonic in arithmetic_instructions:
             # Arithmetic instruction - treat as valued constant literal
             imm_token = constant_handler.process_constant(imm_val, is_arithmetic=True)
-            tokens.append(imm_token)
+            tokens.extend(imm_token)
         elif insn.mnemonic in addressing_control_flow_instructions:
             # Addressing/control flow instruction - check for metadata
             meta, kind = lookup.lookup(imm_val)
@@ -174,7 +174,7 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
                 if kind == "range":
                     if func_min_addr <= imm_val < func_max_addr:  # Local
                         imm_token = constant_handler.process_constant(imm_val, is_arithmetic=True)
-                        tokens.append(imm_token)
+                        tokens.extend(imm_token)
                     else:  # External
                         imm_token = constant_handler.process_constant(
                             imm_val,
@@ -182,7 +182,7 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
                             meta=meta,
                             library_type="function"
                         )
-                        tokens.append(imm_token)
+                        tokens.extend(imm_token)
                 else:
                     imm_token = constant_handler.process_constant(
                         imm_val,
@@ -190,11 +190,11 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
                         meta=meta,
                         library_type="unknown"
                     )
-                    tokens.append(imm_token)
+                    tokens.extend(imm_token)
             else:
                 # No metadata - treat as valued constant literal
                 imm_token = constant_handler.process_constant(imm_val, is_arithmetic=True)
-                tokens.append(imm_token)
+                tokens.extend(imm_token)
         else:  # Fallback - create opaque constant
             meta, kind = lookup.lookup(imm_val)
             if meta is None:
@@ -212,6 +212,6 @@ def tokenize_operand_immediate(addressing_control_flow_instructions, arithmetic_
                 meta=meta,
                 library_type="unknown"
             )
-            tokens.append(imm_token)
+            tokens.extend(imm_token)
 
     return tokens

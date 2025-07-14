@@ -1,5 +1,5 @@
 from typing import Dict, List, Tuple, Optional
-from tokenizer.tokens import TokenResolver, Tokens, OpaqueConstToken, BlockToken
+from tokenizer.tokens import TokenResolver, Tokens, OpaqueConstToken, BlockToken, MemoryOperandSymbol
 from tokenizer.token_manager import VocabularyManager
 import numpy as np
 
@@ -26,7 +26,7 @@ class ConstantHandler:
         self.block_tokens: Dict[int, Tokens] = {}
 
     def process_constant(self, value: int, is_arithmetic: bool = False,
-                        meta: Optional[Dict] = None, library_type: str = "unknown") -> Tokens:
+                        meta: Optional[Dict] = None, library_type: str = "unknown") -> List[Tokens]:
         """
         Process a constant value and return the appropriate token.
 
@@ -49,19 +49,20 @@ class ConstantHandler:
             raise ValueError(f"Invalid hex value: {hex_value}")"""
         # Check if it's a small constant (0x00 to 0xFF)
         if is_arithmetic or 0x00 <= value <= 0xFF or value in self.constant_dict:
-            return self.vocab_manager.Valued_Const(value)
-
-
+            return [self.vocab_manager.Valued_Const(value)]
+        
+        # 
         match_mask = (self.block_ranges[:, 0] < value) & (value < self.block_ranges[:, 1])
         if np.any(match_mask):
             idx = match_mask.nonzero()[0][0]
             if self.block_ranges[idx, 0] == value:
-                return self.vocab_manager.Block(idx)
+                return [self.vocab_manager.Block(idx)]
             else:
-                return self._create_opaque_const(value, meta, library_type)
-                # raise ValueError(f"Value {value} is inside a block range, not allowed.") todo undo
+                return [self.vocab_manager.Block(idx),
+                        self.vocab_manager.MemoryOperand(MemoryOperandSymbol.PLUS),
+                        self.vocab_manager.Valued_Const(value - self.block_ranges[idx, 0])]
         else:
-            return self._create_opaque_const(value, meta, library_type)
+            return [self._create_opaque_const(value, meta, library_type)]
 
 
     def _create_opaque_const(self, value: int, meta: Optional[Dict] = None,
@@ -69,7 +70,6 @@ class ConstantHandler:
         """Create an opaque constant token"""
         if value not in self.opaque_const_tokens:
             # Get or create opaque ID
-            # TODO in hex konvertieren?
             opaque_id = self.resolver.get_opaque_id(value)
             token = self.vocab_manager.Opaque_Const(opaque_id)
             self.opaque_const_tokens[value] = token
