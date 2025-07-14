@@ -648,7 +648,12 @@ def main():
                 break
             binary_path = Path(binary_path_str).resolve()
             print(f"\n[*] Processing binary: {binary_path}")
-            run_tokenizer(binary_path)
+            try:
+                run_tokenizer(binary_path)
+            except Exception as e:
+                print(f"[!] Error processing {binary_path}: {e}")
+                print("Continuing with next binary in queue...")
+                continue
     elif args.single:
         binary_path = Path(args.single).resolve()
         print(f"[*] Processing single binary: {binary_path}")
