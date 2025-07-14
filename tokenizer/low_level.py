@@ -652,7 +652,7 @@ def main():
     group.add_argument('--debugl', action='store_true', help='Debug mode: process ../src/clamav/x86-clang-5.0-O1_sigtool')
 
     # Independent arugments
-    parser.add_argument('--skip_existing', action='store_true', help='Skip existing csv files.')
+    parser.add_argument('--skip_existing', action='store_false', help='Skip existing csv files.')
 
     args = parser.parse_args()
 
