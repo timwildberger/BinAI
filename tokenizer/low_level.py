@@ -19,7 +19,7 @@ from tokenizer.function_data_manager import FunctionDataManager, FunctionData
 from tokenizer.instruction_sets import InstructionSets
 from tokenizer.utils import filter_queue_file_by_existing_output, pop_first_line
 from tokenizer.architecture import PlatformInstructionTypes
-from typing import Optional
+from typing import Optional, Literal
 from tqdm import tqdm
 import numpy as np
 import numpy.typing as npt
@@ -234,7 +234,10 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
     return insn_tokens, insn_tokens2
 
 
-def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, constant_list: dict[str, list[str]], pickle_mainloop_file_path: Path, with_pickled=False, project=None, **kwargs):
+def disassemble_to_tokens(out_folder: Path, binary_name: str, platform: Literal["x86", "arm64", "arm32", "x64"],
+                          cfg: angr.analyses.cfg.cfg_fast.CFGFast, constant_list: dict[str, list[str]],
+                          csv_path: Path, binary_path: Path,
+                          pickle_mainloop_file_path: Path, with_pickled=False, project=None, **kwargs):
     """
     Wrapper function for the entire disassembly and tokenization.
 
@@ -244,6 +247,7 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
         constant_list (dict[str, list[str]]): List of all known constants.
         with_pickled (bool): If True, loads pickles of previously parsed binary. Builds everything anew if False.
     """
+
     if not with_pickled:
         func_names = []
         block_runlength_dict = {}
@@ -258,14 +262,9 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
         )  # func_addr: [{block_name: (block_min_addr, block_max_addr)}, ... , {block_nr: (block_min_addr, block_max_addr)}]
         func_disas: dict[str, list[dict[str, list[str]]]] = {}
 
-        data = {}
-        with open("tokenizer/data_store.json") as f:
-            data = json.load(f)
-
-        inv_prefix_tokens: dict[str, str] = data["inv_prefix_tokens"]
 
         # Get .text section size
-        project = angr.Project(path, auto_load_libs=False) if project is None else project
+        project = angr.Project(binary_path, auto_load_libs=False) if project is None else project
         obj = project.loader.main_object
         text_start: int = 0
         text_end: int = 0
@@ -277,7 +276,7 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
                 text_end = text_start + text_size
 
         # SECTION PARSER FOR FUNCTION LOOKUP
-        lookup = AddressMetaDataLookup(path)
+        lookup = AddressMetaDataLookup(binary_path)
 
         func_disas_token: dict[str, list[dict[str, list[str]]]] = {}
 
@@ -286,7 +285,7 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
         kwargs = dict(block_runlength_dict=block_runlength_dict, cfg=cfg, constant_list=constant_list,
                       func_addr_range=func_addr_range, func_disas=func_disas, func_disas_token=func_disas_token,
                       func_name_addr=func_name_addr, func_names=func_names, insn_runlength_dict=insn_runlength_dict,
-                      inv_prefix_tokens=inv_prefix_tokens, lookup=lookup, opaque_const_meta=opaque_const_meta,
+                      lookup=lookup, opaque_const_meta=opaque_const_meta,
                       opaque_meta_dict=opaque_meta_dict,
                       text_end=text_end,
                       text_start=text_start)
@@ -296,20 +295,18 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
 
     else:
         kwargs.update(dict(cfg=cfg, constant_list=constant_list))
-        func_disas = kwargs["func_disas"]
-        func_disas_token = kwargs["func_disas_token"]
         func_names = kwargs["func_names"]
 
     
     # Initialize VocabularyManager
-    vocab_manager = VocabularyManager("x86")
+    vocab_manager = VocabularyManager(platform)
 
     # Initialize the resolver for token management
     resolver = TokenResolver()
     instr_sets = InstructionSets(SCRIPT_FOLDER / "./data_store.json")
-    kwargs.update(dict(resolver=resolver, instr_sets=instr_sets))
+    kwargs.update(dict(resolver=resolver, instr_sets=instr_sets, csv_path=csv_path))
 
-    function_manager = main_loop(vocab_manager=vocab_manager, path=path, **kwargs)
+    function_manager = main_loop(vocab_manager=vocab_manager, **kwargs)
 
     # save_pickles(func_names,
     #              duplicate_func_names, function_manager, vocab_manager)
@@ -318,8 +315,8 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
 
 
 def main_loop(instr_sets, cfg, constant_list,
-              func_addr_range, func_disas, func_disas_token, func_name_addr, func_names, inv_prefix_tokens, lookup,
-              resolver, text_end, text_start, vocab_manager, path, **_kwargs) -> FunctionDataManager:
+              func_addr_range, func_disas, func_disas_token, func_name_addr, func_names, lookup,
+              resolver, text_end, text_start, vocab_manager, csv_path, **_kwargs) -> FunctionDataManager:
 
     filter = FunctionFilter()
 
@@ -331,7 +328,7 @@ def main_loop(instr_sets, cfg, constant_list,
     exceptions = []
     
 
-    with open(path, "w", newline='', encoding='utf-8') as csvfile:#
+    with open(csv_path, "w", newline='', encoding='utf-8') as csvfile:#
         print(f"WRITING OUTPUT")
         writer = csv.writer(csvfile)
         # Write header with occurrence column added
@@ -541,20 +538,22 @@ def build_vocab_tokenize_and_index(func_tokens: FunctionTokenList) -> tuple[npt.
     return token_ids, block_idx_run_lengths, insn_idx_run_lengths
 
 
-def run_tokenizer(path: Path, skip_existing_csv: bool) -> None:
+def run_tokenizer(binary_path: Path, platform: Literal["x86", "arm64", "arm32", "x64"], skip_existing_csv: bool) -> None:
     print(f"STARTING DISASSEMBLY")
 
-    file_path: Path = path.absolute()
+    file_path: Path = binary_path.absolute()
 
-    out_folder = SCRIPT_FOLDER.parent / "out" / file_path.parent.name
+    binary_name = file_path.name
+    assert binary_name.startswith(platform), "Binary name must start with platform name, wrong platform?"
+    out_folder = SCRIPT_FOLDER.parent / "out" / file_path.parent.name #TODO not clean if there are more than one level of parent folder
     out_folder.mkdir(parents=True, exist_ok = True)
 
-    out_path = out_folder / f"{path.name}_output.csv"
-    pickle_file_path = out_folder / f"{file_path.name}.pkl"
-    pickle_mainloop_file_path = out_folder / f"{file_path.name}.mainloop.pkl"
+    pickle_file_path = out_folder / f"{binary_name}.pkl"
+    pickle_mainloop_file_path = out_folder / f"{binary_name}.mainloop.pkl"
+    csv_path = out_folder / f"{binary_name}_output.csv"
 
-    if out_path.exists() and skip_existing_csv:
-        print(f"File {f"{path.name}_output.csv"} already exists: {out_path}.")
+    if csv_path.exists() and skip_existing_csv:
+        print(f"File {f"{binary_path.name}_output.csv"} already exists: {csv_path}.")
         return None
 
     with_pickled = False
@@ -579,7 +578,7 @@ def run_tokenizer(path: Path, skip_existing_csv: bool) -> None:
         constants: dict[str, list[str]] = parse_and_save_data_sections(project)
         cfg: angr.analyses.cfg.cfg_fast.CFGFast = project.analyses.CFGFast(normalize=True)
 
-        kvargs: dict = dict(project=project, path=path, cfg=cfg, constant_list=constants)
+        kvargs: dict = dict(project=project, cfg=cfg, constant_list=constants)
         print(f"Preparation stage 1 time: {time.time() - start_time:.2f} seconds")
         start_time = time.time()
         with open(pickle_file_path, "wb") as f:
@@ -589,32 +588,34 @@ def run_tokenizer(path: Path, skip_existing_csv: bool) -> None:
 
     start_time = time.time()
     print(f"Calling lowlevel_disas")
-    (func_names, function_manager, vocab_manager) = disassemble_to_tokens(with_pickled=with_pickled, pickle_mainloop_file_path=pickle_mainloop_file_path, **kvargs)
+    kvargs.update(dict(with_pickled=with_pickled, out_folder=out_folder, binary_name=binary_name, platform=platform,
+                       csv_path=csv_path, binary_path=binary_path, pickle_mainloop_file_path=pickle_mainloop_file_path))
+    (func_names, function_manager, vocab_manager) = disassemble_to_tokens(**kvargs)
     disassembly_time = time.time() - start_time
     print(f"Disassembly time: {disassembly_time:.2f} seconds")
 
     
-    """
-    with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile)
-        # Write header with occurrence column added
-        writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata', f'"{",".join(vocab_manager.id_to_token)}"'])
-
-        # Use the sorted iterator from function_manager
-        prev_name = ""
-        prev_row = ""
-        for func_name, occurrence, function_data in function_manager.iter_function_data():
-            row = [
-                func_name,  # Keep original function name unchanged
-                occurrence,  # Add occurrence as separate column
-                function_data.tokens_base64,
-                function_data.block_runlength_base64,
-                function_data.instruction_runlength_base64,
-                str(function_data.opaque_metadata)
-            ]
-            writer.writerow(row)
-            prev_name = func_name
-            prev_row = str(row)"""
+    # """
+    # with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:
+    #     writer = csv.writer(csvfile)
+    #     # Write header with occurrence column added
+    #     writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata', f'"{",".join(vocab_manager.id_to_token)}"'])
+    #
+    #     # Use the sorted iterator from function_manager
+    #     prev_name = ""
+    #     prev_row = ""
+    #     for func_name, occurrence, function_data in function_manager.iter_function_data():
+    #         row = [
+    #             func_name,  # Keep original function name unchanged
+    #             occurrence,  # Add occurrence as separate column
+    #             function_data.tokens_base64,
+    #             function_data.block_runlength_base64,
+    #             function_data.instruction_runlength_base64,
+    #             str(function_data.opaque_metadata)
+    #         ]
+    #         writer.writerow(row)
+    #         prev_name = func_name
+    #         prev_row = str(row)"""
 
     if VERIFICATION:
         print("VERIFY OUTPUT")
@@ -652,11 +653,12 @@ def main():
     group.add_argument('--debugl', action='store_true', help='Debug mode: process ../src/clamav/x86-clang-5.0-O1_sigtool')
 
     # Independent arugments
+    parser.add_argument('--platform', type=str, help='Debug only! Specify the platform (e.g., x86, arm64) for the tokenizer. Default is x86.', default='x86', choices=["x86", "arm64", "arm32", "x64"])
     parser.add_argument('--skip_existing', action='store_false', help='Skip existing csv files.')
 
     args = parser.parse_args()
 
-
+    platform = args.platform
     if args.batch:
         queue_file = args.batch
         print(f"[*] Filtering queue: {queue_file}")
@@ -676,7 +678,7 @@ def main():
             binary_path = Path(binary_path_str).resolve()
             print(f"\n[*] Processing binary: {binary_path}")
             try:
-                run_tokenizer(binary_path, args.skip_existing)
+                run_tokenizer(binary_path, platform=platform, skip_existing_csv=args.skip_existing)
             except Exception as e:
                 print(f"[!] Error processing {binary_path}: {e}")
                 print("Continuing with next binary in queue...")
@@ -684,15 +686,15 @@ def main():
     elif args.single:
         binary_path = Path(args.single).resolve()
         print(f"[*] Processing single binary: {binary_path}")
-        run_tokenizer(binary_path, args.skip_existing)
+        run_tokenizer(binary_path, platform=platform, skip_existing_csv=args.skip_existing)
     elif args.debugs:
-        binary_path = SCRIPT_FOLDER / "../src/clamav/x86-gcc-5-O3_minigzipsh"
+        binary_path = SCRIPT_FOLDER / f"../src/clamav/{platform}-gcc-5-O3_minigzipsh"
         print(f"[*] Debug mode (gcc): {binary_path}")
-        run_tokenizer(binary_path, args.skip_existing)
+        run_tokenizer(binary_path, platform=platform, skip_existing_csv=args.skip_existing)
     elif args.debugl:
-        binary_path = SCRIPT_FOLDER / "../src/clamav/x86-clang-5.0-O1_sigtool"
+        binary_path = SCRIPT_FOLDER / f"../src/clamav/{platform}-clang-5.0-O1_sigtool"
         print(f"[*] Debug mode (clang): {binary_path}")
-        run_tokenizer(binary_path, args.skip_existing)
+        run_tokenizer(binary_path, platform=platform, skip_existing_csv=args.skip_existing)
 
 if __name__ == "__main__":
     print("loading")
