@@ -344,8 +344,8 @@ def main_loop(instr_sets, cfg, constant_list,
         prev_insn_base64 = ""
 
         try:
-            for func_addr, func in tqdm(iterable=sorted(cfg.functions.items(), key=lambda item: item[1].name),
-                                    desc="Retrieving data from alllll functions. Like a big boy."):
+            for i, (func_addr, func) in enumerate(tqdm(iterable=sorted(cfg.functions.items(), key=lambda item: item[1].name),
+                                    desc="Retrieving data from alllll functions. Like a big boy.")):
                 func_name = cfg.functions[func_addr].name
                 if func_name in ["UnresolvableCallTarget", "UnresolvableJumpTarget"]:
                     continue
@@ -450,6 +450,9 @@ def main_loop(instr_sets, cfg, constant_list,
                     prev_insn_base64 = insn_base64
 
 
+                    if i & 255 == 255: # flush every 256 functions
+                        csvfile.flush()
+
                     if VERIFICATION:
                         assert np.all(base64_to_ndarray_vec(tokens_base64) == tokenized_instructions), "Base64 conversion failed for tokens"
                         assert np.all(base64_to_ndarray_vec(block_base64) == block_run_lengths), "Base64 conversion failed for block run lengths"
@@ -495,6 +498,8 @@ def main_loop(instr_sets, cfg, constant_list,
                          "_lit_end_cache",
                          ndarray_to_base64(vocab_manager._lit_end_cache[:vocab_manager._lit_end_count]),
                          ])
+        csvfile.flush()
+
 
     if len(exceptions) > 0:
         all_exection_string = "\n".join([str(e) for e in exceptions])
