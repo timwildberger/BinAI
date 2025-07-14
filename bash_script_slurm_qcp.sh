@@ -8,7 +8,10 @@
 #SBATCH -B 1:7:2
 #SBATCH -n 1
 
-# -------- Configuration -------- #
+# -------- DYNAMIC CONFIGURATION ------- #
+SKIP_EXISTING="$1"  # Pass 1 to enable --skip_existing
+
+# -------- Static Configuration -------- #
 MAIL_USER="tim.wildberger@campus.lmu.de"
 REPO_ROOT="$SLURM_SUBMIT_DIR"
 SLURM_DIR="$REPO_ROOT/slurm"
@@ -47,7 +50,8 @@ DEPENDENCIES=()
 
 for QUEUE_FILE in "$QUEUE_DIR"/*.txt; do
     BASENAME=$(basename "$QUEUE_FILE" .txt)
-    JOB_ID=$(sbatch --parsable <<EOF
+    JOB_ID=$(sbatch --parsable --export=ALL,SKIP_EXISTING=$SKIP_EXISTING <<EOF
+
 #!/usr/bin/env bash
 #SBATCH --job-name=binai-$BASENAME
 #SBATCH --output=$SLURM_DIR/slurm_%x.out
@@ -60,24 +64,22 @@ for QUEUE_FILE in "$QUEUE_DIR"/*.txt; do
 
 source "$REPO_ROOT/.venv/bin/activate"
 cd "$REPO_ROOT"
-python3 -m tokenizer.low_level --batch "$QUEUE_FILE"
+
+NUM_CPUS=\$((SLURM_CPUS_PER_TASK - 1))
+echo "Launching \$NUM_CPUS workers for $QUEUE_FILE"
+
+for i in \$(seq 1 \$NUM_CPUS); do
+    if [[ "\$SKIP_EXISTING" == "1" ]]; then
+        python3 -m tokenizer.low_level --batch "$QUEUE_FILE" --skip_existing &
+    else
+        python3 -m tokenizer.low_level --batch "$QUEUE_FILE" &
+    fi
+done
+
+wait
+echo "All workers completed for $QUEUE_FILE"
 EOF
 )
     echo "Submitted job $JOB_ID for $QUEUE_FILE"
     DEPENDENCIES+=($JOB_ID)
 done
-
-# -------- Step 3: Final notification job -------- #
-DEPENDENCY_STRING=$(IFS=:; echo "${DEPENDENCIES[*]}")
-sbatch --dependency=afterok:$DEPENDENCY_STRING --job-name=binai-notify <<EOF
-#!/usr/bin/env bash
-#SBATCH --output=$SLURM_DIR/slurm_notify.out
-#SBATCH --error=$SLURM_DIR/slurm_notify.err
-#SBATCH --ntasks=1
-#SBATCH --time=00:01:00
-#SBATCH --partition=All
-
-echo "All child SLURM jobs completed for binai." | mail -s "binai job complete" $MAIL_USER
-EOF
-
-echo "All subjobs submitted. Final notification job scheduled."

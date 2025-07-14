@@ -2,6 +2,7 @@ import numpy as np
 import numpy.typing as npt
 from pathlib import Path
 import os
+import fcntl
 
 def register_name_range(id: int, basename: str) -> str:
     """
@@ -107,18 +108,18 @@ def filter_queue_file_by_existing_output(queue_file: str, out_dir: str = "out") 
     print(f"[+] Filtered queue file {queue_file}: {len(filtered_lines)} items remaining.")
 
 def pop_first_line(queue_file: str) -> str | None:
-    with open(queue_file, "r") as f:
+    with open(queue_file, 'r+') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
         lines = f.readlines()
-
-    if not lines:
-        return None
-
-    first_line = lines[0].strip()
-
-    with open(queue_file, "w") as f:
+        if not lines:
+            fcntl.flock(f, fcntl.LOCK_UN)
+            return None
+        first = lines[0].strip()
+        f.seek(0)
+        f.truncate()
         f.writelines(lines[1:])
-
-    return first_line
+        fcntl.flock(f, fcntl.LOCK_UN)
+    return first
 
 
 def num_hex_digits(n):

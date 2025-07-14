@@ -658,6 +658,7 @@ def main():
 
     args = parser.parse_args()
 
+
     if args.batch:
         queue_file = args.batch
         print(f"[*] Filtering queue: {queue_file}")
@@ -665,6 +666,7 @@ def main():
         print(f"Using queue: {queue_file}")
         while True:
             binary_path_str: str | None = pop_first_line(queue_file)
+
             if binary_path_str is None:
                 print("Queue is empty. Exiting.")
                 break
@@ -707,6 +709,4 @@ if __name__ == "__main__":
     print("running main")
     main()
 
-# TODO add parameter to skip existing csv files
-# TODO falls skip information printen
 # TODO adjust slurm file to spawn several processes ( CPU -1)
