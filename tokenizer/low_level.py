@@ -449,6 +449,8 @@ def main_loop(instr_sets, cfg, constant_list,
                     prev_block_base64 = block_base64
                     prev_insn_base64 = insn_base64
 
+                    if i & 16383 == 16383:
+                        save_vocabulary(vocab_manager, writer)
 
                     if i & 255 == 255: # flush every 256 functions
                         csvfile.flush()
@@ -484,20 +486,7 @@ def main_loop(instr_sets, cfg, constant_list,
             print(f"Unrecoverable error in main loop: {e}, writing what we have at least")
             exceptions.append(e)
 
-
-
-        token_count = len(vocab_manager.id_to_token)
-        writer.writerow(["vocabulary",
-                         f'"{",".join(vocab_manager.id_to_token)}"',
-                         f"_id_to_token_type norm:{0 + TokenType.UNRESOLVED}", # need to normalize as ndarray_to_base64 only supports >= 0
-                         ndarray_to_base64(vocab_manager._id_to_token_type[:token_count] - TokenType.UNRESOLVED),
-                         f"_platform_instruction_type_cache norm:{0 + PlatformInstructionTypes.UNRESOLVED}", # need to normalize as ndarray_to_base64 only supports >= 0
-                         ndarray_to_base64(vocab_manager._platform_instruction_type_cache[:token_count] - PlatformInstructionTypes.UNRESOLVED),
-                         "_lit_start_cache",
-                         ndarray_to_base64(vocab_manager._lit_start_cache[:vocab_manager._lit_start_count]),
-                         "_lit_end_cache",
-                         ndarray_to_base64(vocab_manager._lit_end_cache[:vocab_manager._lit_end_count]),
-                         ])
+        save_vocabulary(vocab_manager, writer)
         csvfile.flush()
 
 
@@ -513,6 +502,24 @@ def main_loop(instr_sets, cfg, constant_list,
         function_manager.compact_arrays()
 
         return function_manager
+
+
+def save_vocabulary(vocab_manager, writer):
+    token_count = len(vocab_manager.id_to_token)
+    writer.writerow(["vocabulary",
+                     f'"{",".join(vocab_manager.id_to_token)}"',
+                     f"_id_to_token_type norm:{0 + TokenType.UNRESOLVED}",
+                     # need to normalize as ndarray_to_base64 only supports >= 0
+                     ndarray_to_base64(vocab_manager._id_to_token_type[:token_count] - TokenType.UNRESOLVED),
+                     f"_platform_instruction_type_cache norm:{0 + PlatformInstructionTypes.UNRESOLVED}",
+                     # need to normalize as ndarray_to_base64 only supports >= 0
+                     ndarray_to_base64(vocab_manager._platform_instruction_type_cache[
+                                       :token_count] - PlatformInstructionTypes.UNRESOLVED),
+                     "_lit_start_cache",
+                     ndarray_to_base64(vocab_manager._lit_start_cache[:vocab_manager._lit_start_count]),
+                     "_lit_end_cache",
+                     ndarray_to_base64(vocab_manager._lit_end_cache[:vocab_manager._lit_end_count]),
+                     ])
 
 
 def build_vocab_tokenize_and_index(func_tokens: FunctionTokenList) -> tuple[npt.NDArray[np.int_], npt.NDArray[np.int_], npt.NDArray[np.int_]]:
