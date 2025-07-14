@@ -108,17 +108,21 @@ def filter_queue_file_by_existing_output(queue_file: str, out_dir: str = "out") 
     print(f"[+] Filtered queue file {queue_file}: {len(filtered_lines)} items remaining.")
 
 def pop_first_line(queue_file: str) -> str | None:
-    with open(queue_file, 'r+') as f:
-        portalocker.lock(f, portalocker.LOCK_EX)
-        lines = f.readlines()
-        if not lines:
+    queue_path = Path(queue_file)
+    with queue_path.open('r+') as f:
+        try:
+            portalocker.lock(f, portalocker.LOCK_EX)
+            lines = f.readlines()
+            if not lines:
+                print("[pop_first_line] Queue file empty")
+                return None
+            first = lines[0].strip()
+            f.seek(0)
+            f.truncate()
+            f.writelines(lines[1:])
+            print(f"[pop_first_line] Popped line: {first}")
+        finally:
             portalocker.unlock(f)
-            return None
-        first = lines[0].strip()
-        f.seek(0)
-        f.truncate()
-        f.writelines(lines[1:])
-        portalocker.unlock(f)
     return first
 
 

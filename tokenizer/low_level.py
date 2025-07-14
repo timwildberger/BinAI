@@ -553,8 +553,6 @@ def run_tokenizer(path: Path, skip_existing_csv: bool) -> None:
     pickle_file_path = out_folder / f"{file_path.name}.pkl"
     pickle_mainloop_file_path = out_folder / f"{file_path.name}.mainloop.pkl"
 
-
-    print(skip_existing_csv)
     if out_path.exists() and skip_existing_csv:
         print(f"File {f"{path.name}_output.csv"} already exists: {out_path}.")
         return None
@@ -663,13 +661,18 @@ def main():
         queue_file = args.batch
         print(f"[*] Filtering queue: {queue_file}")
         filter_queue_file_by_existing_output(queue_file)
+
+        with open(queue_file, 'r') as f:
+            print(f"Queue file contents after filtering:\n{''.join(f.readlines())}")
+
         print(f"Using queue: {queue_file}")
         while True:
-            binary_path_str: str | None = pop_first_line(queue_file)
+            binary_path_str = pop_first_line(queue_file)
 
             if binary_path_str is None:
                 print("Queue is empty. Exiting.")
                 break
+            print(f"Popped binary path: {binary_path_str}")
             binary_path = Path(binary_path_str).resolve()
             print(f"\n[*] Processing binary: {binary_path}")
             try:
