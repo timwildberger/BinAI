@@ -649,12 +649,12 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--batch', type=str, metavar='QUEUE_FILE', help='Process a batch of binaries from a queue file')
     group.add_argument('--single', type=str, metavar='BINARY_FILE', help='Process a single binary file')
-    group.add_argument('--debugs', action='store_true', help='Debug mode: process ../src/clamav/x86-gcc-5-O3_minigzipsh')
-    group.add_argument('--debugl', action='store_true', help='Debug mode: process ../src/clamav/x86-clang-5.0-O1_sigtool')
+    group.add_argument('--debugs', action='store_false', help='Debug mode: process ../src/clamav/x86-gcc-5-O3_minigzipsh')
+    group.add_argument('--debugl', action='store_false', help='Debug mode: process ../src/clamav/x86-clang-5.0-O1_sigtool')
 
     # Independent arugments
     parser.add_argument('--platform', type=str, help='Debug only! Specify the platform (e.g., x86, arm64) for the tokenizer. Default is x86.', default='x86', choices=["x86", "arm64", "arm32", "x64"])
-    parser.add_argument('--skip_existing', action='store_false', help='Skip existing csv files.')
+    parser.add_argument('--skip_existing', action='store_true', help='Skip existing csv files.')
 
     args = parser.parse_args()
 
