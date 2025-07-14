@@ -329,10 +329,11 @@ def main_loop(instr_sets, cfg, constant_list,
     if VERIFICATION:
         function_manager = FunctionDataManager(total_functions)
 
-
     exceptions = []
+    out_folder = SCRIPT_FOLDER.parent / "out" / path.parent.name
+    out_folder.mkdir(parents=True, exist_ok = True)
 
-    with open(f"{path.absolute().name}_output.csv", "w", newline='', encoding='utf-8') as csvfile:
+    with open(f"{out_folder / f"{path.name}_output.csv"}", "w", newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         # Write header with occurrence column added
         writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata'])
@@ -691,3 +692,8 @@ if __name__ == "__main__":
 
     print("running main")
     main()
+
+# TODO adjust output path for csv files
+# TODO add parameter to skip existing csv files
+# TODO falls skip information printen
+# TODO adjust slurm file to spawn several processes ( CPU -1)
