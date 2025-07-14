@@ -649,8 +649,8 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--batch', type=str, metavar='QUEUE_FILE', help='Process a batch of binaries from a queue file')
     group.add_argument('--single', type=str, metavar='BINARY_FILE', help='Process a single binary file')
-    group.add_argument('--debugs', action='store_false', help='Debug mode: process ../src/clamav/x86-gcc-5-O3_minigzipsh')
-    group.add_argument('--debugl', action='store_false', help='Debug mode: process ../src/clamav/x86-clang-5.0-O1_sigtool')
+    group.add_argument('--debugs', action='store_true', help='Debug mode: process ../src/clamav/x86-gcc-5-O3_minigzipsh')
+    group.add_argument('--debugl', action='store_true', help='Debug mode: process ../src/clamav/x86-clang-5.0-O1_sigtool')
 
     # Independent arugments
     parser.add_argument('--platform', type=str, help='Debug only! Specify the platform (e.g., x86, arm64) for the tokenizer. Default is x86.', default='x86', choices=["x86", "arm64", "arm32", "x64"])
@@ -690,11 +690,11 @@ def main():
     elif args.debugs:
         binary_path = SCRIPT_FOLDER / f"../src/clamav/{platform}-gcc-5-O3_minigzipsh"
         print(f"[*] Debug mode (gcc): {binary_path}")
-        run_tokenizer(binary_path, platform=platform, skip_existing_csv=args.skip_existing)
+        run_tokenizer(binary_path, platform=platform, skip_existing_csv=False)
     elif args.debugl:
         binary_path = SCRIPT_FOLDER / f"../src/clamav/{platform}-clang-5.0-O1_sigtool"
         print(f"[*] Debug mode (clang): {binary_path}")
-        run_tokenizer(binary_path, platform=platform, skip_existing_csv=args.skip_existing)
+        run_tokenizer(binary_path, platform=platform, skip_existing_csv=False)
 
 if __name__ == "__main__":
     print("loading")
