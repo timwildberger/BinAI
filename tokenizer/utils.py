@@ -2,7 +2,7 @@ import numpy as np
 import numpy.typing as npt
 from pathlib import Path
 import os
-import fcntl
+import portalocker
 
 def register_name_range(id: int, basename: str) -> str:
     """
@@ -109,16 +109,16 @@ def filter_queue_file_by_existing_output(queue_file: str, out_dir: str = "out") 
 
 def pop_first_line(queue_file: str) -> str | None:
     with open(queue_file, 'r+') as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        portalocker.lock(f, portalocker.LOCK_EX)
         lines = f.readlines()
         if not lines:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            portalocker.unlock(f)
             return None
         first = lines[0].strip()
         f.seek(0)
         f.truncate()
         f.writelines(lines[1:])
-        fcntl.flock(f, fcntl.LOCK_UN)
+        portalocker.unlock(f)
     return first
 
 

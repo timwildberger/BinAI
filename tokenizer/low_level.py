@@ -234,7 +234,7 @@ def parse_instruction(instr_sets, constant_handler, func_max_addr, func_min_addr
     return insn_tokens, insn_tokens2
 
 
-def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, constant_list: dict[str, list[str]], with_pickled=False, project=None, **kwargs):
+def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, constant_list: dict[str, list[str]], pickle_mainloop_file_path: Path, with_pickled=False, project=None, **kwargs):
     """
     Wrapper function for the entire disassembly and tokenization.
 
@@ -291,7 +291,6 @@ def disassemble_to_tokens(path: Path, cfg: angr.analyses.cfg.cfg_fast.CFGFast, c
                       text_end=text_end,
                       text_start=text_start)
 
-        pickle_mainloop_file_path = path.parent / f"{path.name}.mainloop.pkl"
         with open(pickle_mainloop_file_path, "wb") as f:
             pickle.dump(kwargs, f)
 
@@ -546,13 +545,14 @@ def run_tokenizer(path: Path, skip_existing_csv: bool) -> None:
     print(f"STARTING DISASSEMBLY")
 
     file_path: Path = path.absolute()
-    # file_path = Path("../src/clamav/x86-gcc-5-O3_minigzipsh").absolute()
-    pickle_file_path = file_path.parent / f"{file_path.name}.pkl"
-    pickle_mainloop_file_path = file_path.parent / f"{file_path.name}.mainloop.pkl"
 
     out_folder = SCRIPT_FOLDER.parent / "out" / file_path.parent.name
     out_folder.mkdir(parents=True, exist_ok = True)
+
     out_path = out_folder / f"{path.name}_output.csv"
+    pickle_file_path = out_folder / f"{file_path.name}.pkl"
+    pickle_mainloop_file_path = out_folder / f"{file_path.name}.mainloop.pkl"
+
 
     print(skip_existing_csv)
     if out_path.exists() and skip_existing_csv:
@@ -581,7 +581,7 @@ def run_tokenizer(path: Path, skip_existing_csv: bool) -> None:
         constants: dict[str, list[str]] = parse_and_save_data_sections(project)
         cfg: angr.analyses.cfg.cfg_fast.CFGFast = project.analyses.CFGFast(normalize=True)
 
-        kvargs: dict = dict(project=project, path=out_path, cfg=cfg, constant_list=constants)
+        kvargs: dict = dict(project=project, path=path, cfg=cfg, constant_list=constants)
         print(f"Preparation stage 1 time: {time.time() - start_time:.2f} seconds")
         start_time = time.time()
         with open(pickle_file_path, "wb") as f:
@@ -591,7 +591,7 @@ def run_tokenizer(path: Path, skip_existing_csv: bool) -> None:
 
     start_time = time.time()
     print(f"Calling lowlevel_disas")
-    (func_names, function_manager, vocab_manager) = disassemble_to_tokens(with_pickled=with_pickled, **kvargs)
+    (func_names, function_manager, vocab_manager) = disassemble_to_tokens(with_pickled=with_pickled, pickle_mainloop_file_path=pickle_mainloop_file_path, **kvargs)
     disassembly_time = time.time() - start_time
     print(f"Disassembly time: {disassembly_time:.2f} seconds")
 
