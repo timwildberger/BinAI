@@ -449,7 +449,7 @@ def main_loop(instr_sets, cfg, constant_list,
                     prev_block_base64 = block_base64
                     prev_insn_base64 = insn_base64
 
-                    if i & 16383 == 16383:
+                    if i & 16383 == 16383: #2^14-1 so save every 16384 functions
                         save_vocabulary(vocab_manager, writer)
 
                     if i & 255 == 255: # flush every 256 functions
