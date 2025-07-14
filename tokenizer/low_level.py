@@ -330,10 +330,10 @@ def main_loop(instr_sets, cfg, constant_list,
         function_manager = FunctionDataManager(total_functions)
 
     exceptions = []
-    out_folder = SCRIPT_FOLDER.parent / "out" / path.parent.name
-    out_folder.mkdir(parents=True, exist_ok = True)
+    
 
-    with open(f"{out_folder / f"{path.name}_output.csv"}", "w", newline='', encoding='utf-8') as csvfile:
+    with open(path, "w", newline='', encoding='utf-8') as csvfile:#
+        print(f"WRITING OUTPUT")
         writer = csv.writer(csvfile)
         # Write header with occurrence column added
         writer.writerow(['function_name', 'occurrence', 'tokens_base64', 'block_runlength_base64', 'instruction_runlength_base64', 'opaque_metadata'])
@@ -542,13 +542,23 @@ def build_vocab_tokenize_and_index(func_tokens: FunctionTokenList) -> tuple[npt.
     return token_ids, block_idx_run_lengths, insn_idx_run_lengths
 
 
-def run_tokenizer(path: Path) -> None:
+def run_tokenizer(path: Path, skip_existing_csv: bool) -> None:
     print(f"STARTING DISASSEMBLY")
 
     file_path: Path = path.absolute()
     # file_path = Path("../src/clamav/x86-gcc-5-O3_minigzipsh").absolute()
     pickle_file_path = file_path.parent / f"{file_path.name}.pkl"
     pickle_mainloop_file_path = file_path.parent / f"{file_path.name}.mainloop.pkl"
+
+    out_folder = SCRIPT_FOLDER.parent / "out" / file_path.parent.name
+    out_folder.mkdir(parents=True, exist_ok = True)
+    out_path = out_folder / f"{path.name}_output.csv"
+
+    print(skip_existing_csv)
+    if out_path.exists() and skip_existing_csv:
+        print(f"File {f"{path.name}_output.csv"} already exists: {out_path}.")
+        return None
+
     with_pickled = False
     start_time = time.time()
 
@@ -571,7 +581,7 @@ def run_tokenizer(path: Path) -> None:
         constants: dict[str, list[str]] = parse_and_save_data_sections(project)
         cfg: angr.analyses.cfg.cfg_fast.CFGFast = project.analyses.CFGFast(normalize=True)
 
-        kvargs: dict = dict(project=project, path=file_path, cfg=cfg, constant_list=constants)
+        kvargs: dict = dict(project=project, path=out_path, cfg=cfg, constant_list=constants)
         print(f"Preparation stage 1 time: {time.time() - start_time:.2f} seconds")
         start_time = time.time()
         with open(pickle_file_path, "wb") as f:
@@ -585,7 +595,7 @@ def run_tokenizer(path: Path) -> None:
     disassembly_time = time.time() - start_time
     print(f"Disassembly time: {disassembly_time:.2f} seconds")
 
-    print(f"WRITING OUTPUT")
+    
     """
     with open("output.csv", "w", newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
@@ -642,6 +652,10 @@ def main():
     group.add_argument('--single', type=str, metavar='BINARY_FILE', help='Process a single binary file')
     group.add_argument('--debugs', action='store_true', help='Debug mode: process ../src/clamav/x86-gcc-5-O3_minigzipsh')
     group.add_argument('--debugl', action='store_true', help='Debug mode: process ../src/clamav/x86-clang-5.0-O1_sigtool')
+
+    # Independent arugments
+    parser.add_argument('--skip_existing', action='store_true', help='Skip existing csv files.')
+
     args = parser.parse_args()
 
     if args.batch:
@@ -657,7 +671,7 @@ def main():
             binary_path = Path(binary_path_str).resolve()
             print(f"\n[*] Processing binary: {binary_path}")
             try:
-                run_tokenizer(binary_path)
+                run_tokenizer(binary_path, args.skip_existing)
             except Exception as e:
                 print(f"[!] Error processing {binary_path}: {e}")
                 print("Continuing with next binary in queue...")
@@ -665,15 +679,15 @@ def main():
     elif args.single:
         binary_path = Path(args.single).resolve()
         print(f"[*] Processing single binary: {binary_path}")
-        run_tokenizer(binary_path)
+        run_tokenizer(binary_path, args.skip_existing)
     elif args.debugs:
         binary_path = SCRIPT_FOLDER / "../src/clamav/x86-gcc-5-O3_minigzipsh"
         print(f"[*] Debug mode (gcc): {binary_path}")
-        run_tokenizer(binary_path)
+        run_tokenizer(binary_path, args.skip_existing)
     elif args.debugl:
         binary_path = SCRIPT_FOLDER / "../src/clamav/x86-clang-5.0-O1_sigtool"
         print(f"[*] Debug mode (clang): {binary_path}")
-        run_tokenizer(binary_path)
+        run_tokenizer(binary_path, args.skip_existing)
 
 if __name__ == "__main__":
     print("loading")
@@ -693,7 +707,6 @@ if __name__ == "__main__":
     print("running main")
     main()
 
-# TODO adjust output path for csv files
 # TODO add parameter to skip existing csv files
 # TODO falls skip information printen
 # TODO adjust slurm file to spawn several processes ( CPU -1)
