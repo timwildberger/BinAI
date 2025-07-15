@@ -11,7 +11,7 @@ def strip_debug(binary):
     return binary
 
 def strip_symbols(binary):
-    to_remove = [".symtab", ".strtab", ".shstrtab"]
+    to_remove = [".symtab", ".strtab"]
     for section in to_remove:
         sec = binary.get_section(section)
         if sec:
@@ -19,7 +19,7 @@ def strip_symbols(binary):
     return binary
 
 def strip_metadata(binary):
-    to_remove = [".comment", ".note", ".interp", ".hash", ".gnu.hash"]
+    to_remove = [".comment", ".note", ".hash", ".gnu.hash"]
     for section in to_remove:
         sec = binary.get_section(section)
         if sec:
