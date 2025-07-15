@@ -15,7 +15,7 @@ def collect_csv_files(directory):
                 new_name = file[:-len("_output.csv")]
                 print(f"CSV: {new_name}")
                 csv_files.add(new_name)
-                
+    print(len(csv_files))
     return csv_files
 
 def check_paths_in_dict(txt_file_path, csv_set):
