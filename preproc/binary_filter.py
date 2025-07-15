@@ -132,9 +132,9 @@ def main():
     print(f"Found {len(paths)} matching binaries.")
 
     queue = sort_files_by_size(paths)
-    with open(file="queue_complete.txt", mode="w", encoding="utf-8") as f:
+    with open(file="queue/queue_complete.txt", mode="w", encoding="utf-8") as f:
         for line in queue:
-            f.write(line)
+            f.write(line + "\n")
 
     split_paths_interleaved(queue, args.output_dir, args.splits)
 
