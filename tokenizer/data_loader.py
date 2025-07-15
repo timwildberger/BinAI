@@ -1,3 +1,6 @@
+import csv
+import io
+
 import numpy as np
 import os
 
@@ -7,6 +10,7 @@ def main():
 
     num_chunks = (np.size(data) + chunk_size - 1) // chunk_size  # Ceiling division
 
+    last_line_chunk = None
     for i in range(num_chunks):
         start = min(-(i + 1) << 14, -np.size(data))
         end = -(i << 14) if (i << 14) != 0 else None
@@ -20,10 +24,16 @@ def main():
         if np.any(mask):
             last_local_index = np.where(mask)[0][-1]  # Position in the chunk
             last_global_index = (np.size(data) + start) + last_local_index  # Global position in the file
-
+            last_line_chunk = chunk[last_local_index:]
+            break;
             print(f"  Last linebreak: local index {last_local_index}, global index {last_global_index}")
         else:
             print(f"  No linebreaks found in this chunk.")
+
+    csv_data = io.BytesIO(last_line_chunk.tobytes())
+    reader = csv.reader(io.TextIOWrapper(csv_data, encoding='ascii'))
+    for row in reader:
+        print(row)
 
 if __name__ == "__main__":
     main()
