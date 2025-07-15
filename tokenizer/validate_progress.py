@@ -10,6 +10,7 @@ def collect_csv_files(directory):
     # Walk through the directory to find all .csv files
     for root, dirs, files in os.walk(directory):
         for file in files:
+            print(file)
             if file.endswith(".csv"):
                 file_path = os.path.join(root, file)
                 with open(file_path, 'r') as f:
@@ -33,6 +34,7 @@ def check_paths_in_dict(txt_file_path, csv_dict):
     
     # Check each path and see if it's in the dictionary
     for path in paths:
+        print(path)
         path = path.strip()  # Remove any extra spaces or newline characters
         if path in csv_dict:
             found_count += 1
@@ -51,10 +53,16 @@ def main():
     txt_file = "queue/queue_complete.txt"       # .txt file with paths to check
 
     # Collect all .csv files in the dictionary
-    csv_dict = collect_csv_files(csv_directory)
+    try:
+        csv_dict = collect_csv_files(csv_directory)
+    except Exception as e:
+        print(e)
 
     # Check paths in the .txt file against the dictionary
-    percentage, found, total = check_paths_in_dict(txt_file, csv_dict)
+    try:
+        percentage, found, total = check_paths_in_dict(txt_file, csv_dict)
+    except Exception as e:
+        print(e)
 
     # Print the result
     print(f"Found {found} out of {total} paths.")
