@@ -10,8 +10,8 @@ def collect_csv_files(directory):
     # Walk through the directory to find all .csv files
     for root, dirs, files in os.walk(directory):
         for file in files:
-            print(file)
             if file.endswith(".csv"):
+                print(f"CSV: {file}")
                 file_path = os.path.join(root, file)
                 with open(file_path, 'r') as f:
                     csv_files[file_path] = f.read()  # Store the file's content
