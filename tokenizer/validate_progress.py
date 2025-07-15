@@ -6,7 +6,7 @@ def collect_csv_files(directory):
     Collect all .csv files from a nested directory and store them in a dictionary.
     The key is the file path, and the value is the file's content.
     """
-    csv_files = set(str)
+    csv_files: set[str] = set()
     
     # Walk through the directory to find all .csv files
     for root, dirs, files in os.walk(directory):
@@ -17,7 +17,7 @@ def collect_csv_files(directory):
                 
     return csv_files
 
-def check_paths_in_dict(txt_file_path, csv_dict):
+def check_paths_in_dict(txt_file_path, csv_set):
     """
     Check if the paths from the .txt file are in the given set.
     Returns the percentage of found paths.
@@ -35,7 +35,7 @@ def check_paths_in_dict(txt_file_path, csv_dict):
     for path in paths:
         print(path)
         file = Path(path).name  # Remove any extra spaces or newline characters
-        if file in csv_dict:
+        if file in csv_set:
             found_count += 1
     
     # Calculate the percentage of found paths
