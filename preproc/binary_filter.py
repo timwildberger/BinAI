@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import argparse
+from tqdm import tqdm
 
 class BinaryFilter:
     def __init__(self, root_dir="src"):
@@ -133,7 +134,7 @@ def main():
 
     queue = sort_files_by_size(paths)
     with open(file="queue/queue_complete.txt", mode="w", encoding="utf-8") as f:
-        for line in queue:
+        for line in tqdm(queue, desc="Writing queue to file", unit="line"):
             f.write(line + "\n")
 
     split_paths_interleaved(queue, args.output_dir, args.splits)
