@@ -713,5 +713,3 @@ if __name__ == "__main__":
 
     print("running main")
     main()
-
-# TODO adjust slurm file to spawn several processes ( CPU -1)

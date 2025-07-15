@@ -66,7 +66,7 @@ class BinaryFilter:
                 results.append(binary)
         return results
 
-def sort_files_by_size(paths):
+def sort_files_by_size(paths) -> list[str]:
     """
     Takes a list of file paths (as strings), returns a list of (path, size_in_bytes),
     sorted by size descendingly.
@@ -132,6 +132,10 @@ def main():
     print(f"Found {len(paths)} matching binaries.")
 
     queue = sort_files_by_size(paths)
+    with open("queue_complete.txt") as f:
+        for line in queue:
+            f.write(line)
+
     split_paths_interleaved(queue, args.output_dir, args.splits)
 
 if __name__ == "__main__":
