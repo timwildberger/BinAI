@@ -1,26 +1,25 @@
 import os
+from pathlib import Path
 
 def collect_csv_files(directory):
     """
     Collect all .csv files from a nested directory and store them in a dictionary.
     The key is the file path, and the value is the file's content.
     """
-    csv_files = {}
+    csv_files = set(str)
     
     # Walk through the directory to find all .csv files
     for root, dirs, files in os.walk(directory):
         for file in files:
             if file.endswith(".csv"):
-                print(f"CSV: {file}")
-                file_path = os.path.join(root, file)
-                with open(file_path, 'r') as f:
-                    csv_files[file_path] = f.read()  # Store the file's content
+                print(f"CSV: {Path(file).stem}")
+                csv_files.add(Path(file).stem)
                 
     return csv_files
 
 def check_paths_in_dict(txt_file_path, csv_dict):
     """
-    Check if the paths from the .txt file are in the given dictionary.
+    Check if the paths from the .txt file are in the given set.
     Returns the percentage of found paths.
     """
     found_count = 0
@@ -35,8 +34,8 @@ def check_paths_in_dict(txt_file_path, csv_dict):
     # Check each path and see if it's in the dictionary
     for path in paths:
         print(path)
-        path = path.strip()  # Remove any extra spaces or newline characters
-        if path in csv_dict:
+        file = Path(path).name  # Remove any extra spaces or newline characters
+        if file in csv_dict:
             found_count += 1
     
     # Calculate the percentage of found paths
@@ -54,13 +53,13 @@ def main():
 
     # Collect all .csv files in the dictionary
     try:
-        csv_dict = collect_csv_files(csv_directory)
+        csv_set = collect_csv_files(csv_directory)
     except Exception as e:
         print(e)
 
     # Check paths in the .txt file against the dictionary
     try:
-        percentage, found, total = check_paths_in_dict(txt_file, csv_dict)
+        percentage, found, total = check_paths_in_dict(txt_file, csv_set)
     except Exception as e:
         print(e)
 
