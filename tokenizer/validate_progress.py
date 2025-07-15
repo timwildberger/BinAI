@@ -12,10 +12,9 @@ def collect_csv_files(directory):
     for root, dirs, files in os.walk(directory):
         for file in files:
             if file.endswith(".csv"):
-                file_path = Path(file)
-                file_new_path = file_path.with_name(file_path.name[:-len("_output.csv")])
-                print(f"CSV: {file_new_path}")
-                csv_files.add(file_new_path)
+                new_name = file[:-len("_output.csv")]
+                print(f"CSV: {new_name}")
+                csv_files.add(new_name)
                 
     return csv_files
 
