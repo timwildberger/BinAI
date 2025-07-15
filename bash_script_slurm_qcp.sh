@@ -68,9 +68,9 @@ echo "Launching \$NUM_CPUS workers for \${QUEUE_FILE} with SKIP_EXISTING=\${SKIP
 
 for i in \$(seq 1 \$NUM_CPUS); do
     if [[ "\${SKIP_EXISTING}" == "1" ]]; then
-        python3 -m tokenizer.low_level --batch "\${QUEUE_FILE}" --skip_existing &
+        python3 -m tokenizer.low_level --batch "\${QUEUE_FILE}" --skip_existing --platform x64 &
     else
-        python3 -m tokenizer.low_level --batch "\${QUEUE_FILE}" &
+        python3 -m tokenizer.low_level --batch "\${QUEUE_FILE}" --platform x64 &
     fi
 done
 
