@@ -14,7 +14,6 @@ def collect_csv_files(directory):
             if file.endswith(".csv"):
                 # Remove the '_output' suffix from the file name (before the extension)
                 new_name = file[:-len("_output.csv")]  # Remove the suffix
-                print(f"CSV: {new_name}")
                 csv_files.add(new_name)
     print(f"Collected {len(csv_files)} CSV files.")
     return csv_files

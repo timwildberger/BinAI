@@ -128,7 +128,7 @@ def main():
     args = parser.parse_args()
 
     bf = BinaryFilter("./src")
-    matches = bf.filter(arch=["x86"], compiler=["gcc", "clang"], version=["9", "7", "5"], opt=["O0", "O3"])
+    matches = bf.filter(arch=["x86"], compiler=["gcc", "clang"], version=["9", "7", "5", "4.8", "3.5", "5.0"], opt=["O0", "O1", "O2", "O3", "Os"])
     paths = [match["path"] for match in matches]
     print(f"Found {len(paths)} matching binaries.")
 
