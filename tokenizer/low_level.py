@@ -1,18 +1,18 @@
 import angr
 import pickle
-import json
 import time
 from pathlib import Path
 from tokenizer.address_meta_data_lookup import AddressMetaDataLookup
 from tokenizer.compact_base64_utils import ndarray_to_base64
 from tokenizer.compact_base64_utils import base64_to_ndarray_vec
 from tokenizer.csv_files import parse_and_save_data_sections, token_to_functions
+from tokenizer.data_loader import save_vocabulary
 from tokenizer.function_filter import FunctionFilter
 from tokenizer.function_token_list import FunctionTokenList
 from tokenizer.op_imm_mem import tokenize_operand_memory, tokenize_operand_immediate
 from tokenizer.opaque_remapping import apply_opaque_mapping, apply_opaque_mapping_raw_optimized
 from tokenizer.token_lists import BlockTokenList
-from tokenizer.tokens import TokenResolver, Tokens, BlockToken, TokenType
+from tokenizer.tokens import TokenResolver, Tokens, BlockToken
 from tokenizer.token_manager import VocabularyManager
 from tokenizer.constant_handler import ConstantHandler
 from tokenizer.function_data_manager import FunctionDataManager, FunctionData
@@ -499,24 +499,6 @@ def main_loop(instr_sets, cfg, constant_list,
         function_manager.compact_arrays()
 
         return function_manager
-
-
-def save_vocabulary(vocab_manager, writer):
-    token_count = len(vocab_manager.id_to_token)
-    writer.writerow(["vocabulary",
-                     f'"{",".join(vocab_manager.id_to_token)}"',
-                     f"_id_to_token_type norm:{0 + TokenType.UNRESOLVED}",
-                     # need to normalize as ndarray_to_base64 only supports >= 0
-                     ndarray_to_base64(vocab_manager._id_to_token_type[:token_count] - TokenType.UNRESOLVED),
-                     f"_platform_instruction_type_cache norm:{0 + PlatformInstructionTypes.UNRESOLVED}",
-                     # need to normalize as ndarray_to_base64 only supports >= 0
-                     ndarray_to_base64(vocab_manager._platform_instruction_type_cache[
-                                       :token_count] - PlatformInstructionTypes.UNRESOLVED),
-                     "_lit_start_cache",
-                     ndarray_to_base64(vocab_manager._lit_start_cache[:vocab_manager._lit_start_count]),
-                     "_lit_end_cache",
-                     ndarray_to_base64(vocab_manager._lit_end_cache[:vocab_manager._lit_end_count]),
-                     ])
 
 
 def build_vocab_tokenize_and_index(func_tokens: FunctionTokenList) -> tuple[npt.NDArray[np.int_], npt.NDArray[np.int_], npt.NDArray[np.int_]]:

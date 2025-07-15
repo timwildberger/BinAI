@@ -51,6 +51,9 @@ class Tokens(ABC):
     @property
     def platform_instruction_type(self) -> PlatformInstructionTypes: ...
 
+
+    def register_on_vocab_manager(self, other: 'VocabularyManager') -> Tokens: ...
+
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
     def __hash__(self) -> int: ...
@@ -61,8 +64,18 @@ class PlatformToken(Tokens, ABC):
     @property
     @classmethod
     def token_type(cls) -> TokenType: ...
+
+
+    @property
     @abstractmethod
-    def __init__(self, token: str) -> None: ...
+    def platform(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def platform_instruction_type(self) -> PlatformInstructionTypes:
+
+    @abstractmethod
+    def __init__(self, token: str, insn_type: PlatformInstructionTypes) -> None: ...
 
 class ValuedConstToken(Tokens, ABC):
     value: int

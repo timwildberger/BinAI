@@ -174,14 +174,14 @@ class TokenUtils:
             The decoded integer value
         """
         if len(token_ids) == 1:
-            # Simple case: single token - use cache for lookup
+            # Simple case: single token
             token_id = token_ids[0]
             hex_value = TokenUtils.cache_numeric_reverse(
                 token_class, token_id, f'_{basename}_cache', vocab_manager
             )
             return hex_value
         else:
-            # Complex case: multiple tokens - always use cache
+            # Complex case: multiple tokens
             start_found = False
             decoded_value = 0
             shift = max_key.bit_length() - 1
@@ -199,7 +199,6 @@ class TokenUtils:
             minus_token_id = minus_token_id[0] if support_negative else None
 
             for token_id in token_ids:
-                # Use cached token IDs for faster comparison
                 if start_token_id is not None and token_id == start_token_id:
                     start_found = True
                 elif end_token_id is not None and token_id == end_token_id:
@@ -219,11 +218,3 @@ class TokenUtils:
 
             return decoded_value
 
-
-    @staticmethod
-    def decode_valued_const_from_tokens(token_ids: List[int], vocab_manager: 'VocabularyManager') -> int:
-        """Decode valued const from token IDs - handles both simple and complex cases"""
-        return TokenUtils.decode_tokens_to_value(
-            token_ids, "VALUED_CONST", "VALUED_CONST", vocab_manager,
-            max_key=256, support_negative=True, token_class=vocab_manager.Valued_Const, inner_token_class=vocab_manager.Valued_Const
-        )

@@ -151,6 +151,14 @@ class Tokens(ABC):
         """Convert token to its string representation (for debugging only)"""
         ...
 
+    def register_on_vocab_manager(self, other: 'VocabularyManager') -> 'Tokens':
+        return self._register_on(other.get_token_class_for_type(self.token_type))
+
+
+    @abstractmethod
+    def _register_on(self, other_cls: type['Tokens']) -> 'Tokens': ...
+
+
     @abstractmethod
     def to_asm_like(self) -> str:
         """Convert token to its string representation that resembles assembly syntax"""
@@ -191,12 +199,24 @@ class PlatformToken(Tokens, ABC):
         """Return the type of this token representation"""
         return TokenType.PLATFORM
 
+
+
+    @property
     @abstractmethod
-    def __init__(self, token: str) -> None: ...
+    def platform(self) -> str: ...
+
+
 
     @property
     @abstractmethod
     def platform_instruction_type(self) -> PlatformInstructionTypes: ...
+
+    @abstractmethod
+    def __init__(self, token: str, insn_type: PlatformInstructionTypes, platform:str=None) -> None: ...
+
+
+    def _register_on(self, cls_other ):
+        return cls_other(self.token, self.platform_instruction_type, self.platform)
 
 
 class ValuedConstToken(Tokens, ABC):
@@ -213,6 +233,10 @@ class ValuedConstToken(Tokens, ABC):
     @abstractmethod
     def __init__(self, value: int) -> None:
         ...
+
+
+    def _register_on(self, cls_other ):
+        return cls_other(self.value)
 
 
 class IdentifierToken(Tokens, ABC):
@@ -261,6 +285,10 @@ class IdentifierToken(Tokens, ABC):
         ...
 
 
+    def _register_on(self, cls_other ):
+        return cls_other(self.id)
+
+
 class BlockDefToken(Tokens, ABC):
     """Protocol for block definition tokens"""
 
@@ -273,6 +301,9 @@ class BlockDefToken(Tokens, ABC):
     @abstractmethod
     def __init__(self) -> None:
         ...
+
+    def _register_on(self, cls_other ):
+        return cls_other()
 
 
 class BlockToken(IdentifierToken, ABC):
@@ -316,11 +347,19 @@ class MemoryOperandToken(Tokens, ABC):
     def __init__(self, symbol: MemoryOperandSymbol) -> None:
         ...
 
+
+    def _register_on(self, cls_other ):
+        return cls_other(self.symbol)
+
 class TokenRaw(Tokens, ABC):
     _cache: dict[TokenType, type['TokenRaw']] = {}
 
     @abstractmethod
     def resolve(self, vocab_manager: 'VocabularyManager') -> 'Tokens': ...
+
+
+    def _register_on(self, cls_other ):
+        raise NotImplementedError("TokenRaw cannot be registered directly, please resolve first!")
 
     @staticmethod
     def with_type(token_type_enum: TokenType) -> type['TokenRaw']:
