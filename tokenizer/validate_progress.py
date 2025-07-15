@@ -12,8 +12,9 @@ def collect_csv_files(directory):
     for root, dirs, files in os.walk(directory):
         for file in files:
             if file.endswith(".csv"):
+                file_path = Path(file)
                 print(f"CSV: {Path(file).stem}")
-                csv_files.add(Path(file).stem)
+                csv_files.add(file_path.with_name(file_path.name[:-len("_output")]))
                 
     return csv_files
 
@@ -33,8 +34,8 @@ def check_paths_in_dict(txt_file_path, csv_set):
     
     # Check each path and see if it's in the dictionary
     for path in paths:
-        print(path)
         file = Path(path).name  # Remove any extra spaces or newline characters
+        print(file)
         if file in csv_set:
             found_count += 1
     
