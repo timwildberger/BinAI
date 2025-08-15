@@ -3,6 +3,13 @@
 
 python3 -m tokenizer.low_level 
 
+low_level has a help function that documents how it exactly works.
+```bash
+python3 -m tokenizer.low_level --help
+```
+
+## old readme below
+
 Operand types: (in theory)
 0: Register         mov eax, ebx          ; reg (eax), reg (ebx)        => operands are registers (type 0)
 1: Immediate        add eax, 5            ; reg (eax), imm (5)           => one register, one immediate (type 1)
